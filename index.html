@@ -40,6 +40,9 @@
   window.firebaseSaveSensors = async (ids) => {
     await setDoc(docRef, { withSensorIds: ids, updatedAt: serverTimestamp() }, { merge: true });
   };
+  window.firebaseSavePins = async (manualPins) => {
+    await setDoc(docRef, { manualPins, updatedAt: serverTimestamp() }, { merge: true });
+  };
   window.firebaseLoadCSV = async () => {
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
@@ -47,6 +50,7 @@
     return {
       csv: data.csv,
       withSensorIds: data.withSensorIds || [],
+      manualPins: data.manualPins || {},
       updatedAt: data.updatedAt?.toDate?.() ?? null
     };
   };
@@ -229,6 +233,33 @@
   body.light .sensor-badge.off:hover { border-color: #94a3b8; color: #475569; }
   body.light .sensor-badge.on  { background: #dcfce7; color: #166534; border-color: #86efac; }
   body.light .sensor-badge.on:hover { background: #bbf7d0; }
+
+  /* PIN cell edit */
+  .pin-cell { display: inline-flex; align-items: center; gap: 6px; }
+  .pin-value {
+    font-family: monospace; font-size: 12px; color: #e2e8f0;
+    cursor: pointer; padding: 2px 4px; border-radius: 3px;
+    border: 1px dashed transparent;
+  }
+  .pin-value:hover { color: #c7d2fe; border-color: #4f46e5; }
+  .pin-value.empty { color: #475569; }
+  .pin-manual-tag {
+    background: #1e1b4b; color: #a5b4fc;
+    border: 1px solid #4f46e5; border-radius: 3px;
+    padding: 1px 5px; font-size: 9px; font-weight: 700;
+    letter-spacing: .6px; line-height: 1.2;
+    font-family: -apple-system, sans-serif;
+  }
+  .pin-edit-input {
+    background: #12151f; border: 1px solid #4f46e5; border-radius: 4px;
+    padding: 3px 6px; color: #e2e8f0; font-family: monospace;
+    font-size: 12px; width: 80px; outline: none;
+  }
+  body.light .pin-value { color: #1e293b; }
+  body.light .pin-value:hover { color: #4338ca; border-color: #c7d2fe; }
+  body.light .pin-value.empty { color: #cbd5e1; }
+  body.light .pin-manual-tag { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+  body.light .pin-edit-input { background: #fff; color: #1e293b; border-color: #4f46e5; }
 
   .upload-btn {
     background: #4f46e5;
@@ -877,7 +908,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.006</span>
+  <span class="version-tag">v1.007</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
@@ -1048,6 +1079,7 @@ let visibleCols = new Set();
 let currentTab = 'table', leafletMap = null;
 let clusterRadius = parseInt(localStorage.getItem('ferraClusterRadius') ?? '60', 10);
 let withSensorIds = new Set();
+let manualPins = new Map(); // Subscription ID -> manually entered PIN
 let timeMin = null, timeMax = null, timeCutoff = null;
 let timePlaying = false, timePlaySpeed = 1, timePlayRAF = null;
 
@@ -1220,6 +1252,7 @@ async function tryLoadFromCloud() {
     if (data && data.csv) {
       currentCSVText = data.csv;
       withSensorIds = new Set(data.withSensorIds || []);
+      manualPins = new Map(Object.entries(data.manualPins || {}));
       init(data.csv);
       document.getElementById('filename').textContent = 'cloud dataset';
       setSyncStatus('ok', '☁ Synced · ' + fmtSyncTime(data.updatedAt));
@@ -1230,6 +1263,77 @@ async function tryLoadFromCloud() {
     console.error('Firebase load failed', err);
     setSyncStatus('error', '☁ Load failed');
   }
+}
+
+function editPin(subId, td) {
+  if (!subId) return;
+  const currentPin = manualPins.get(subId) || '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentPin;
+  input.maxLength = 6;
+  input.placeholder = '6-digit PIN';
+  input.className = 'pin-edit-input';
+  td.innerHTML = '';
+  td.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    if (!save) {
+      applyFilters();
+      return;
+    }
+    const newPin = input.value.trim();
+    if (newPin && !/^\d{6}$/.test(newPin)) {
+      alert('PIN must be exactly 6 digits, or leave blank to remove the manual override.');
+      applyFilters();
+      return;
+    }
+
+    const wasManual = manualPins.has(subId);
+    if (newPin) manualPins.set(subId, newPin);
+    else        manualPins.delete(subId);
+
+    // Recompute pin/city for the affected row(s)
+    const pinIdx  = headers.indexOf('PIN Code');
+    const cityIdx = headers.indexOf('City');
+    const addrIdx = headers.indexOf('Customer Address');
+    const sidIdx  = headers.indexOf('Subscription ID');
+    if (pinIdx >= 0 && sidIdx >= 0) {
+      allRows.forEach(row => {
+        if (row[sidIdx] === subId) {
+          const addr = addrIdx >= 0 ? (row[addrIdx] || '') : '';
+          const finalPin = manualPins.get(subId) || extractPIN(addr);
+          row[pinIdx] = finalPin;
+          if (cityIdx >= 0) row[cityIdx] = pinToCity(finalPin);
+        }
+      });
+    }
+
+    applyFilters();
+    buildStats();
+
+    if (!window.firebaseSavePins) return;
+    if (!wasManual && !newPin) return; // nothing actually changed
+    setSyncStatus('syncing', '☁ Saving PIN…');
+    try {
+      await window.firebaseSavePins(Object.fromEntries(manualPins));
+      setSyncStatus('ok', '☁ Synced · just now');
+    } catch (err) {
+      console.error('PIN save failed', err);
+      setSyncStatus('error', '☁ Save failed');
+    }
+  };
+
+  input.onblur = () => finish(true);
+  input.onkeydown = e => {
+    if (e.key === 'Enter')  { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  };
 }
 
 async function toggleSensor(subId) {
@@ -1506,8 +1610,8 @@ function init(text) {
   headers = [...origHeaders.slice(0, insertAt), 'PIN Code', 'City', 'Sensor', ...origHeaders.slice(insertAt)];
   allRows = rows.slice(1).filter(r => r.some(c => c)).map(row => {
     const addr = addrIdx >= 0 ? (row[addrIdx] || '') : '';
-    const pin  = extractPIN(addr);
     const sid  = subIdIdx >= 0 ? (row[subIdIdx] || '') : '';
+    const pin  = manualPins.get(sid) || extractPIN(addr);
     const sensor = withSensorIds.has(sid) ? 'With Sensor' : 'Without Sensor';
     return [...row.slice(0, insertAt), pin, pinToCity(pin), sensor, ...row.slice(insertAt)];
   });
@@ -1703,6 +1807,25 @@ function renderTable(rows) {
         span.title = 'Click to toggle';
         if (sid) span.onclick = () => toggleSensor(sid);
         td.appendChild(span);
+      } else if (h === 'PIN Code') {
+        const sid = sidIdx >= 0 ? row[sidIdx] : '';
+        const isManual = sid && manualPins.has(sid);
+        const wrap = document.createElement('span');
+        wrap.className = 'pin-cell';
+        const pinSpan = document.createElement('span');
+        pinSpan.className = 'pin-value' + (val ? '' : ' empty');
+        pinSpan.textContent = val || '— add —';
+        pinSpan.title = sid ? 'Click to edit PIN' : 'No Subscription ID for this row';
+        if (sid) pinSpan.onclick = () => editPin(sid, td);
+        wrap.appendChild(pinSpan);
+        if (isManual) {
+          const m = document.createElement('span');
+          m.className = 'pin-manual-tag';
+          m.textContent = 'M';
+          m.title = 'Manually entered';
+          wrap.appendChild(m);
+        }
+        td.appendChild(wrap);
       } else {
         td.innerHTML = formatCell(h, val);
       }
