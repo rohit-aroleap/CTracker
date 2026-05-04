@@ -1,0 +1,1701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ferra Subscriptions Viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    background: #1a1d27;
+    border-bottom: 1px solid #2d3148;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar h1 { font-size: 16px; font-weight: 600; color: #fff; flex-shrink: 0; }
+  .topbar .sep { color: #3d4166; }
+  .version-tag {
+    font-family: monospace;
+    font-size: 11px;
+    color: #818cf8;
+    background: #1e1b4b;
+    border: 1px solid #3730a3;
+    border-radius: 4px;
+    padding: 2px 7px;
+    flex-shrink: 0;
+    letter-spacing: .3px;
+  }
+  body.light .version-tag {
+    color: #4338ca;
+    background: #eef2ff;
+    border-color: #c7d2fe;
+  }
+
+  .upload-btn {
+    background: #4f46e5;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .upload-btn:hover { background: #4338ca; }
+  #fileInput { display: none; }
+
+  .filename {
+    font-size: 12px;
+    color: #64748b;
+    flex-shrink: 0;
+  }
+
+  .search-wrap {
+    flex: 1;
+    max-width: 340px;
+    margin-left: auto;
+    position: relative;
+  }
+  .search-wrap input {
+    width: 100%;
+    background: #12151f;
+    border: 1px solid #2d3148;
+    border-radius: 6px;
+    padding: 6px 12px 6px 32px;
+    color: #e2e8f0;
+    font-size: 13px;
+    outline: none;
+  }
+  .search-wrap input:focus { border-color: #4f46e5; }
+  .search-wrap .icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #64748b;
+    font-size: 14px;
+  }
+
+  .drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: calc(100vh - 57px);
+    gap: 12px;
+    color: #475569;
+  }
+  .drop-zone .big-icon { font-size: 48px; }
+  .drop-zone p { font-size: 15px; }
+  .drop-zone .hint { font-size: 13px; color: #334155; }
+
+  .main { padding: 20px 24px; }
+
+  /* Stats */
+  .stats { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat-card {
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 8px;
+    padding: 12px 18px;
+    min-width: 110px;
+  }
+  .stat-card .label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .5px; }
+  .stat-card .value { font-size: 22px; font-weight: 700; color: #fff; margin-top: 2px; }
+  .stat-card .sub { font-size: 11px; color: #475569; margin-top: 1px; }
+
+  /* Filters */
+  .filters {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-label { font-size: 12px; color: #64748b; }
+  .filter-btn {
+    background: #1e2235;
+    border: 1px solid #2d3148;
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: #94a3b8;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .filter-btn:hover { border-color: #4f46e5; color: #c7d2fe; }
+  .filter-btn.active { background: #312e81; border-color: #4f46e5; color: #c7d2fe; }
+
+  /* Column toggles */
+  .col-toggles {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    align-items: center;
+  }
+  .col-toggle-label { font-size: 12px; color: #64748b; margin-right: 4px; }
+  .col-toggle {
+    background: #1e2235;
+    border: 1px solid #2d3148;
+    border-radius: 4px;
+    padding: 3px 9px;
+    font-size: 11px;
+    color: #64748b;
+    cursor: pointer;
+  }
+  .col-toggle:hover { border-color: #475569; color: #94a3b8; }
+  .col-toggle.active { background: #1e2a45; border-color: #3b82f6; color: #93c5fd; }
+
+  /* Table wrapper */
+  .table-wrap {
+    border-radius: 8px;
+    border: 1px solid #2d3148;
+    overflow: auto;
+    max-height: calc(100vh - 320px);
+    background: #1a1d27;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  thead th {
+    background: #12151f;
+    color: #94a3b8;
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    padding: 9px 12px;
+    border-bottom: 1px solid #2d3148;
+    position: sticky;
+    top: 0;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  thead th:hover { color: #c7d2fe; }
+  thead th .sort-arrow { margin-left: 4px; opacity: 0.4; }
+  thead th.sorted .sort-arrow { opacity: 1; color: #818cf8; }
+
+  tbody tr {
+    border-bottom: 1px solid #1e2235;
+    transition: background .1s;
+  }
+  tbody tr:hover { background: #1e2235; }
+  tbody tr:last-child { border-bottom: none; }
+
+  td {
+    padding: 8px 12px;
+    color: #cbd5e1;
+    vertical-align: top;
+    max-width: 260px;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  td.nowrap { white-space: nowrap; }
+
+  /* Status badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-active     { background: #14532d; color: #86efac; }
+  .badge-cancelled  { background: #3f1515; color: #fca5a5; }
+  .badge-customer-cancelled { background: #451a03; color: #fdba74; }
+  .badge-initialized{ background: #1e3a5f; color: #93c5fd; }
+
+  .badge-success { background: #14532d; color: #86efac; }
+  .badge-failed  { background: #3f1515; color: #fca5a5; }
+
+  .badge-tier-individual { background: #1e293b; color: #94a3b8; }
+  .badge-tier-duo        { background: #1e1b4b; color: #a5b4fc; }
+  .badge-tier-family     { background: #2d1b69; color: #c4b5fd; }
+
+  .badge-source { background: #1c2a20; color: #86efac; font-weight: 400; }
+
+  /* Demo cell */
+  .demo-tag {
+    display: inline-block;
+    background: #1e2f3f;
+    color: #7dd3fc;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    margin: 1px 2px 1px 0;
+  }
+
+  .uid-chip {
+    display: inline-block;
+    background: #1e1b4b;
+    color: #818cf8;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: monospace;
+    margin: 1px;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  .addr { color: #94a3b8; font-size: 11.5px; max-width: 200px; }
+
+  .row-count {
+    font-size: 12px;
+    color: #475569;
+    margin-bottom: 8px;
+  }
+
+  .no-results {
+    text-align: center;
+    padding: 48px;
+    color: #334155;
+    font-size: 14px;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    background: #12151f;
+    border-radius: 6px;
+    padding: 3px;
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-size: 13px;
+    color: #64748b;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .tab-btn:hover { color: #94a3b8; }
+  .tab-btn.active { background: #1e2235; color: #e2e8f0; }
+
+  /* Map */
+  #mapView {
+    display: none;
+    height: calc(100vh - 57px);
+    position: relative;
+  }
+  #mapView.visible { display: block; }
+  #leafletMap { width: 100%; height: 100%; }
+
+  .map-legend {
+    position: absolute;
+    bottom: 28px;
+    right: 10px;
+    z-index: 1000;
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    min-width: 140px;
+  }
+  .map-legend .leg-title { font-weight: 600; color: #94a3b8; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .map-legend .leg-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; color: #cbd5e1; }
+  .map-legend .leg-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Cluster slider */
+  .cluster-control {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-width: 220px;
+    font-size: 12px;
+  }
+  .cluster-control .cc-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .cluster-control .cc-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    color: #94a3b8;
+    font-weight: 600;
+  }
+  .cluster-control .cc-value {
+    font-family: monospace;
+    color: #c7d2fe;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .cluster-control input[type=range] {
+    width: 100%;
+    accent-color: #4f46e5;
+    cursor: pointer;
+  }
+  .cluster-control .cc-labels {
+    display: flex;
+    justify-content: space-between;
+    color: #475569;
+    font-size: 10px;
+    margin-top: 2px;
+  }
+
+  body.light .cluster-control {
+    background: #ffffff;
+    border-color: #e2e8f0;
+  }
+  body.light .cluster-control .cc-title { color: #64748b; }
+  body.light .cluster-control .cc-value { color: #4338ca; }
+  body.light .cluster-control .cc-labels { color: #cbd5e1; }
+
+  /* Cinematic zoom */
+  .cinema-control {
+    position: absolute;
+    top: 130px;
+    right: 10px;
+    z-index: 1000;
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-width: 220px;
+    font-size: 12px;
+  }
+  .cinema-control .cc-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    color: #94a3b8;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .cinema-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .cinema-row:last-child { margin-bottom: 0; }
+  .cinema-btn {
+    background: #1e2235;
+    border: 1px solid #2d3148;
+    border-radius: 5px;
+    padding: 4px 10px;
+    color: #c7d2fe;
+    font-size: 11px;
+    cursor: pointer;
+    flex: 1;
+    white-space: nowrap;
+  }
+  .cinema-btn:hover { background: #2d3148; border-color: #4f46e5; }
+  .cinema-btn.captured { border-color: #22c55e; color: #86efac; }
+  .cinema-btn.play { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+  .cinema-btn.play:hover { background: #4338ca; }
+  .cinema-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .cinema-status {
+    font-family: monospace;
+    color: #64748b;
+    font-size: 10px;
+    min-width: 70px;
+    text-align: right;
+  }
+  .cinema-status.set { color: #22c55e; }
+  .cinema-control input[type=range] { flex: 1; accent-color: #4f46e5; cursor: pointer; }
+  .cinema-dur-label { font-family: monospace; color: #c7d2fe; font-weight: 700; min-width: 32px; text-align: right; }
+
+  body.light .cinema-control { background: #ffffff; border-color: #e2e8f0; }
+  body.light .cinema-control .cc-title { color: #64748b; }
+  body.light .cinema-btn { background: #f1f5f9; border-color: #e2e8f0; color: #4338ca; }
+  body.light .cinema-btn:hover { background: #eef2ff; border-color: #4f46e5; }
+  body.light .cinema-btn.captured { border-color: #22c55e; color: #166534; background: #f0fdf4; }
+  body.light .cinema-btn.play { background: #4f46e5; color: #fff; }
+  body.light .cinema-status { color: #94a3b8; }
+  body.light .cinema-status.set { color: #16a34a; }
+  body.light .cinema-dur-label { color: #4338ca; }
+  body.light .cinema-row[style*="border-top"] { border-top-color: #e2e8f0 !important; }
+
+  /* Time Travel timeline */
+  .time-travel {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    right: 280px;
+    z-index: 1000;
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 10px;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 12px;
+  }
+  .tt-play {
+    background: #4f46e5;
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .tt-play:hover { background: #4338ca; }
+  .tt-date {
+    font-family: monospace;
+    color: #c7d2fe;
+    font-weight: 700;
+    font-size: 13px;
+    min-width: 110px;
+    flex-shrink: 0;
+  }
+  .tt-slider-wrap { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .tt-slider-wrap input[type=range] {
+    width: 100%;
+    accent-color: #4f46e5;
+    cursor: pointer;
+  }
+  .tt-bounds {
+    display: flex;
+    justify-content: space-between;
+    color: #475569;
+    font-size: 10px;
+  }
+  .tt-count {
+    color: #94a3b8;
+    font-size: 11px;
+    text-align: right;
+    min-width: 90px;
+    flex-shrink: 0;
+  }
+  .tt-count .n {
+    color: #e2e8f0;
+    font-weight: 700;
+    font-size: 14px;
+    font-family: monospace;
+  }
+  .tt-speed {
+    background: #1e2235;
+    border: 1px solid #2d3148;
+    border-radius: 4px;
+    color: #94a3b8;
+    padding: 3px 6px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  body.light .time-travel { background: #ffffff; border-color: #e2e8f0; }
+  body.light .tt-date { color: #4338ca; }
+  body.light .tt-bounds { color: #cbd5e1; }
+  body.light .tt-count { color: #64748b; }
+  body.light .tt-count .n { color: #0f172a; }
+  body.light .tt-speed { background: #f1f5f9; border-color: #e2e8f0; color: #475569; }
+
+  /* Leaflet popup dark theme */
+  .leaflet-popup-content-wrapper {
+    background: #1a1d27 !important;
+    border: 1px solid #2d3148 !important;
+    border-radius: 8px !important;
+    color: #e2e8f0 !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5) !important;
+  }
+  .leaflet-popup-tip { background: #1a1d27 !important; }
+  .leaflet-popup-content { margin: 12px 14px !important; font-size: 13px !important; line-height: 1.5 !important; }
+  .pop-pin { font-family: monospace; font-size: 11px; color: #64748b; }
+  .pop-city { font-weight: 600; color: #e2e8f0; margin-bottom: 6px; }
+  .pop-count { display: flex; gap: 12px; margin-bottom: 8px; }
+  .pop-stat { text-align: center; }
+  .pop-stat .n { font-size: 20px; font-weight: 700; }
+  .pop-stat .l { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .4px; }
+  .pop-names { border-top: 1px solid #2d3148; padding-top: 6px; margin-top: 4px; max-height: 120px; overflow-y: auto; }
+  .pop-names div { font-size: 12px; color: #94a3b8; padding: 1px 0; }
+
+  /* Theme toggle */
+  .theme-toggle {
+    background: #1e2235;
+    border: 1px solid #2d3148;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 14px;
+    color: #94a3b8;
+    cursor: pointer;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .theme-toggle:hover { border-color: #4f46e5; color: #c7d2fe; }
+
+  /* ─────── LIGHT THEME ─────── */
+  body.light {
+    background: #f1f5f9;
+    color: #1e293b;
+  }
+  body.light .topbar {
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  body.light .topbar h1 { color: #0f172a; }
+  body.light .topbar .sep { color: #cbd5e1; }
+  body.light .filename { color: #94a3b8; }
+  body.light .search-wrap input {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #1e293b;
+  }
+  body.light .search-wrap input:focus { border-color: #4f46e5; }
+  body.light .search-wrap .icon { color: #94a3b8; }
+
+  body.light .drop-zone { color: #94a3b8; }
+  body.light .drop-zone .hint { color: #cbd5e1; }
+
+  body.light .stat-card {
+    background: #ffffff;
+    border-color: #e2e8f0;
+  }
+  body.light .stat-card .label { color: #94a3b8; }
+  body.light .stat-card .value { color: #0f172a; }
+  body.light .stat-card .sub { color: #cbd5e1; }
+
+  body.light .filter-label,
+  body.light .col-toggle-label { color: #94a3b8; }
+  body.light .filter-btn {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #475569;
+  }
+  body.light .filter-btn:hover { border-color: #4f46e5; color: #4338ca; }
+  body.light .filter-btn.active {
+    background: #eef2ff;
+    border-color: #4f46e5;
+    color: #3730a3;
+  }
+  body.light .col-toggle {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #94a3b8;
+  }
+  body.light .col-toggle:hover { border-color: #94a3b8; color: #475569; }
+  body.light .col-toggle.active {
+    background: #eff6ff;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+  }
+
+  body.light .table-wrap {
+    background: #ffffff;
+    border-color: #e2e8f0;
+  }
+  body.light thead th {
+    background: #f8fafc;
+    color: #64748b;
+    border-bottom-color: #e2e8f0;
+  }
+  body.light thead th:hover { color: #4338ca; }
+  body.light tbody tr { border-bottom-color: #f1f5f9; }
+  body.light tbody tr:hover { background: #f8fafc; }
+  body.light td { color: #334155; }
+
+  body.light .badge-active     { background: #dcfce7; color: #166534; }
+  body.light .badge-cancelled  { background: #fee2e2; color: #991b1b; }
+  body.light .badge-customer-cancelled { background: #ffedd5; color: #9a3412; }
+  body.light .badge-initialized{ background: #dbeafe; color: #1e40af; }
+  body.light .badge-success    { background: #dcfce7; color: #166534; }
+  body.light .badge-failed     { background: #fee2e2; color: #991b1b; }
+  body.light .badge-tier-individual { background: #f1f5f9; color: #475569; }
+  body.light .badge-tier-duo        { background: #ede9fe; color: #5b21b6; }
+  body.light .badge-tier-family     { background: #f3e8ff; color: #6b21a8; }
+  body.light .badge-source     { background: #ecfdf5; color: #065f46; }
+
+  body.light .demo-tag { background: #e0f2fe; color: #075985; }
+  body.light .uid-chip { background: #ede9fe; color: #5b21b6; }
+  body.light .addr { color: #475569; }
+  body.light .row-count { color: #94a3b8; }
+  body.light .no-results { color: #cbd5e1; }
+
+  body.light .tabs { background: #f1f5f9; }
+  body.light .tab-btn { color: #64748b; }
+  body.light .tab-btn:hover { color: #334155; }
+  body.light .tab-btn.active { background: #ffffff; color: #0f172a; }
+
+  body.light .theme-toggle {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #475569;
+  }
+  body.light .theme-toggle:hover { border-color: #4f46e5; color: #4338ca; }
+
+  body.light .upload-btn { background: #4f46e5; color: #ffffff; }
+  body.light .upload-btn:hover { background: #4338ca; }
+
+  body.light .map-legend {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #334155;
+  }
+  body.light .map-legend .leg-title { color: #64748b; }
+  body.light .map-legend .leg-row { color: #334155; }
+  body.light .map-legend > div:last-child { color: #94a3b8 !important; border-top-color: #e2e8f0 !important; }
+
+  body.light .leaflet-popup-content-wrapper {
+    background: #ffffff !important;
+    border-color: #e2e8f0 !important;
+    color: #1e293b !important;
+    box-shadow: 0 4px 16px rgba(15,23,42,0.12) !important;
+  }
+  body.light .leaflet-popup-tip { background: #ffffff !important; }
+  body.light .pop-pin { color: #94a3b8; }
+  body.light .pop-city { color: #0f172a; }
+  body.light .pop-stat .l { color: #94a3b8; }
+  body.light .pop-stat .n { color: #0f172a; }
+  body.light .pop-names { border-top-color: #e2e8f0; }
+  body.light .pop-names div { color: #475569; }
+
+  body.light tbody tr td span[style*="color:#334155"] { color: #cbd5e1 !important; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Ferra Subscriptions</h1>
+  <span class="version-tag">v1.001</span>
+  <span class="sep">|</span>
+  <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
+  <input type="file" id="fileInput" accept=".csv">
+  <span class="filename" id="filename">No file loaded</span>
+  <div class="tabs" id="tabBar" style="display:none">
+    <button class="tab-btn active" id="tabTable" onclick="switchTab('table')">Table</button>
+    <button class="tab-btn" id="tabMap" onclick="switchTab('map')">Map</button>
+  </div>
+  <div class="search-wrap" id="searchWrap">
+    <span class="icon">🔍</span>
+    <input type="text" id="searchInput" placeholder="Search name, phone, address…" oninput="applyFilters()">
+  </div>
+  <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark">🌙</button>
+</div>
+
+<div class="drop-zone" id="dropZone">
+  <div class="big-icon">📄</div>
+  <p>Upload or drop your subscriptions CSV here</p>
+  <p class="hint">Supports the Ferra subscriptions export format</p>
+  <button class="upload-btn" style="margin-top:8px" onclick="document.getElementById('fileInput').click()">Choose file</button>
+</div>
+
+<div id="mapView">
+  <div id="leafletMap"></div>
+  <div class="cluster-control">
+    <div class="cc-head">
+      <span class="cc-title">Cluster radius</span>
+      <span class="cc-value" id="ccValue">60 px</span>
+    </div>
+    <input type="range" id="clusterSlider" min="0" max="150" value="60" step="5" oninput="onClusterSliderChange(this.value)">
+    <div class="cc-labels">
+      <span>No clustering</span>
+      <span>Heavy</span>
+    </div>
+  </div>
+
+  <div class="cinema-control">
+    <div class="cc-title">Cinematic zoom</div>
+    <div class="cinema-row">
+      <button class="cinema-btn" id="cinemaStartBtn" onclick="setCinemaStart()">📍 Set start</button>
+      <span class="cinema-status" id="cinemaStartStatus">—</span>
+    </div>
+    <div class="cinema-row">
+      <button class="cinema-btn" id="cinemaEndBtn" onclick="setCinemaEnd()">🎯 Set end</button>
+      <span class="cinema-status" id="cinemaEndStatus">—</span>
+    </div>
+    <div class="cinema-row">
+      <span style="color:#94a3b8;font-size:11px">Duration</span>
+      <input type="range" id="cinemaDuration" min="1" max="30" value="8" step="1" oninput="document.getElementById('cinemaDurLabel').textContent=this.value+'s'">
+      <span class="cinema-dur-label" id="cinemaDurLabel">8s</span>
+    </div>
+    <div class="cinema-row">
+      <button class="cinema-btn play" id="cinemaPlayBtn" onclick="playCinema()" disabled>▶ Play</button>
+      <button class="cinema-btn" onclick="resetCinema()">↺ Clear</button>
+    </div>
+    <div class="cinema-row" style="margin-top:8px;border-top:1px solid #2d3148;padding-top:8px">
+      <button class="cinema-btn" onclick="smoothZoom(-1)" title="Smooth zoom out">− Zoom out</button>
+      <button class="cinema-btn" onclick="smoothZoom(1)" title="Smooth zoom in">+ Zoom in</button>
+    </div>
+  </div>
+
+  <div class="time-travel" id="timeTravel" style="display:none">
+    <button class="tt-play" id="ttPlayBtn" onclick="toggleTimePlay()">▶</button>
+    <div class="tt-date" id="ttDate">—</div>
+    <div class="tt-slider-wrap">
+      <input type="range" id="ttSlider" min="0" max="100" value="100" step="1" oninput="onTimeSliderChange(this.value)">
+      <div class="tt-bounds">
+        <span id="ttMin">—</span>
+        <span id="ttMax">—</span>
+      </div>
+    </div>
+    <select class="tt-speed" id="ttSpeed" onchange="timePlaySpeed=parseFloat(this.value)">
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+    </select>
+    <div class="tt-count"><span class="n" id="ttCount">0</span> <span style="opacity:.6">/ <span id="ttTotal">0</span></span></div>
+  </div>
+
+  <div class="map-legend">
+    <div class="leg-title">Subscribers</div>
+    <div class="leg-row"><span class="leg-dot" style="background:#22c55e"></span> Mostly active</div>
+    <div class="leg-row"><span class="leg-dot" style="background:#f59e0b"></span> Mixed</div>
+    <div class="leg-row"><span class="leg-dot" style="background:#ef4444"></span> Mostly cancelled</div>
+    <div style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#64748b;font-size:11px">Cluster number = subscriber count</div>
+  </div>
+</div>
+
+<div class="main" id="mainContent" style="display:none">
+  <div class="stats" id="statsRow"></div>
+
+  <div class="filters" id="statusFilters">
+    <span class="filter-label">Status:</span>
+  </div>
+  <div class="filters" id="tierFilters">
+    <span class="filter-label">Tier:</span>
+  </div>
+  <div class="filters" id="sourceFilters">
+    <span class="filter-label">Source:</span>
+  </div>
+
+  <div class="col-toggles" id="colToggles">
+    <span class="col-toggle-label">Columns:</span>
+  </div>
+
+  <div class="row-count" id="rowCount"></div>
+
+  <div class="table-wrap">
+    <table id="dataTable">
+      <thead id="tableHead"></thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ── CSV parser (handles quoted multiline fields) ─────────────────────────────
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i], next = text[i+1];
+    if (inQuote) {
+      if (c === '"' && next === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuote = false; }
+      else { field += c; }
+    } else {
+      if (c === '"') { inQuote = true; }
+      else if (c === ',') { row.push(field.trim()); field = ''; }
+      else if (c === '\n') {
+        row.push(field.trim()); field = '';
+        rows.push(row); row = [];
+      } else if (c === '\r') { /* skip */ }
+      else { field += c; }
+    }
+  }
+  if (field.trim() || row.length) { row.push(field.trim()); rows.push(row); }
+  return rows;
+}
+
+// ── State ────────────────────────────────────────────────────────────────────
+let allRows = [], headers = [], activeFilters = {}, sortCol = -1, sortDir = 1;
+let visibleCols = new Set();
+let currentTab = 'table', leafletMap = null;
+let clusterRadius = parseInt(localStorage.getItem('ferraClusterRadius') ?? '60', 10);
+let timeMin = null, timeMax = null, timeCutoff = null;
+let timePlaying = false, timePlaySpeed = 1, timePlayRAF = null;
+
+const HIDDEN_COLS_DEFAULT = new Set([
+  'Subscription ID', 'PG Subscription ID', 'Customer ID',
+  'Plan Tier', 'Source', 'Start Date', 'End Date', 'Retention (months)',
+  'Pre-Conversion Demo', 'Onboarding Demo Mode',
+  'PG Customer Name', 'PG Customer Phone', 'PG Customer Email',
+  'Last Payment Status', 'Last Payment Date',
+  'Machine ID', 'User UIDs', 'Comments Count', 'Created At', 'Updated At'
+]);
+
+// Columns that should not wrap
+const NOWRAP_COLS = new Set([
+  'Status','Plan Tier','Source','Start Date','End Date','Retention (months)',
+  'Last Payment Status','Last Payment Date','Comments Count','PIN Code','City'
+]);
+
+// ── Load file ────────────────────────────────────────────────────────────────
+document.getElementById('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  loadFile(file);
+});
+
+// Drag & drop
+const body = document.body;
+body.addEventListener('dragover', e => e.preventDefault());
+body.addEventListener('drop', e => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+function loadFile(file) {
+  document.getElementById('filename').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = e => init(e.target.result);
+  reader.readAsText(file);
+}
+
+function extractPIN(address) {
+  const m = address.match(/\b([1-9]\d{5})\b/);
+  return m ? m[1] : '';
+}
+
+const PIN_CITY = {
+  // Bengaluru
+  '560001': 'Bengaluru – Shivajinagar',
+  '560004': 'Bengaluru – Basavanagudi',
+  '560005': 'Bengaluru – Malleswaram',
+  '560006': 'Bengaluru – Rajajinagar',
+  '560008': 'Bengaluru – Yeshwanthpur',
+  '560010': 'Bengaluru – Kamakshipalya',
+  '560011': 'Bengaluru – Nagapura',
+  '560012': 'Bengaluru – Chamrajpet',
+  '560015': 'Bengaluru – BTM Layout',
+  '560016': 'Bengaluru – Bannerghatta Rd',
+  '560017': 'Bengaluru – Vijayanagar',
+  '560021': 'Bengaluru – Kengeri',
+  '560022': 'Bengaluru – Uttarahalli',
+  '560023': 'Bengaluru – Subramanyapura',
+  '560024': 'Bengaluru – Kumaraswamy Layout',
+  '560025': 'Bengaluru – Richmond Town',
+  '560026': 'Bengaluru – Wilson Garden',
+  '560029': 'Bengaluru – Koramangala',
+  '560032': 'Bengaluru – CV Raman Nagar',
+  '560033': 'Bengaluru – Marathahalli',
+  '560034': 'Bengaluru – KR Puram',
+  '560035': 'Bengaluru – Kasavanahalli',
+  '560037': 'Bengaluru – Mahadevapura',
+  '560038': 'Bengaluru – Krishnarajapuram',
+  '560039': 'Bengaluru – Banaswadi',
+  '560040': 'Bengaluru – Lingarajapuram',
+  '560041': 'Bengaluru – HBR Layout',
+  '560042': 'Bengaluru – Banaswadi',
+  '560043': 'Bengaluru – Kammanahalli',
+  '560045': 'Bengaluru – Ulsoor',
+  '560047': 'Bengaluru – Benson Town',
+  '560048': 'Bengaluru – Mahadevapura',
+  '560049': 'Bengaluru – Whitefield',
+  '560050': 'Bengaluru – Whitefield',
+  '560053': 'Bengaluru – Cottonpete',
+  '560054': 'Bengaluru – Peenya',
+  '560059': 'Bengaluru – Hesaraghatta Rd',
+  '560060': 'Bengaluru – Tumkur Rd',
+  '560061': 'Bengaluru – Gubbalala',
+  '560062': 'Bengaluru – JP Nagar',
+  '560063': 'Bengaluru – Jayanagar',
+  '560064': 'Bengaluru – Jakkur',
+  '560066': 'Bengaluru – Whitefield',
+  '560067': 'Bengaluru – Electronic City',
+  '560068': 'Bengaluru – Electronic City',
+  '560070': 'Bengaluru – Jayanagar',
+  '560072': 'Bengaluru – Kadugodi',
+  '560075': 'Bengaluru – Nagarabhavi',
+  '560076': 'Bengaluru – Vijayanagar',
+  '560077': 'Bengaluru – Rajajinagar',
+  '560078': 'Bengaluru – JP Nagar',
+  '560079': 'Bengaluru – Basaveshwara Nagar',
+  '560082': 'Bengaluru – Rajajinagar Industrial',
+  '560083': 'Bengaluru – Jalahalli',
+  '560084': 'Bengaluru – Banashankari',
+  '560085': 'Bengaluru – Banashankari',
+  '560086': 'Bengaluru – Mahalakshmipuram',
+  '560087': 'Bengaluru – Nandini Layout',
+  '560092': 'Bengaluru – Koramangala',
+  '560093': 'Bengaluru – Koramangala',
+  '560094': 'Bengaluru – HSR Layout',
+  '560095': 'Bengaluru – Sarjapur',
+  '560096': 'Bengaluru – Varthur',
+  '560097': 'Bengaluru – Ramamurthy Nagar',
+  '560098': 'Bengaluru – Hennur',
+  '560099': 'Bengaluru – Yelahanka',
+  '560100': 'Bengaluru – Yelahanka',
+  '560102': 'Bengaluru – HSR Layout',
+  '560103': 'Bengaluru – Begur',
+  '560109': 'Bengaluru – KR Puram',
+  '560111': 'Bengaluru – Jakkur',
+  '560116': 'Bengaluru – Hesaraghatta',
+  // Near Bengaluru
+  '562106': 'Devanahalli',
+  '562125': 'Hoskote',
+  '562149': 'Budigere',
+  '562157': 'Chikkaballapura',
+  '583201': 'Ballari',
+  // NCR / Delhi
+  '110026': 'Delhi – Hauz Khas',
+  '110030': 'Delhi – Mehrauli',
+  '110048': 'Delhi – Saket',
+  '110049': 'Delhi – Vasant Kunj',
+  '110070': 'Delhi – Uttam Nagar',
+  '201301': 'Noida',
+  '201303': 'Noida',
+  // Gurugram
+  '122001': 'Gurugram',
+  '122002': 'Gurugram',
+  '122003': 'Gurugram',
+  '122004': 'Gurugram',
+  '122011': 'Gurugram',
+  // Others
+  '126101': 'Jind',
+  '311001': 'Bhilwara',
+  '335512': 'Sri Ganganagar',
+  '342003': 'Jodhpur',
+  '380015': 'Ahmedabad',
+  '444606': 'Amravati',
+  '490020': 'Bhilai',
+};
+
+function pinToCity(pin) {
+  return PIN_CITY[pin] || '';
+}
+
+const PIN_COORDS = {
+  // Bengaluru
+  '560001':[12.9850,77.6010],'560004':[12.9416,77.5748],'560005':[13.0035,77.5673],
+  '560006':[12.9900,77.5524],'560008':[13.0230,77.5487],'560010':[12.9780,77.5350],
+  '560011':[12.9940,77.5420],'560012':[12.9617,77.5659],'560015':[12.9166,77.6101],
+  '560016':[12.8887,77.5970],'560017':[12.9726,77.5245],'560021':[12.9086,77.4836],
+  '560022':[12.8900,77.5430],'560023':[12.9020,77.5270],'560024':[12.8990,77.5620],
+  '560025':[12.9716,77.6069],'560026':[12.9540,77.6020],'560029':[12.9279,77.6271],
+  '560032':[12.9840,77.6570],'560033':[12.9591,77.6974],'560034':[13.0050,77.6960],
+  '560035':[12.9200,77.6850],'560037':[12.9906,77.7350],'560038':[13.0050,77.6750],
+  '560039':[13.0140,77.6490],'560040':[13.0000,77.6380],'560041':[13.0350,77.6400],
+  '560042':[13.0120,77.6530],'560043':[13.0230,77.6440],'560045':[12.9794,77.6197],
+  '560047':[12.9879,77.6104],'560048':[12.9936,77.7100],'560049':[12.9698,77.7499],
+  '560050':[12.9801,77.7302],'560053':[12.9652,77.5707],'560054':[13.0280,77.5190],
+  '560059':[13.0750,77.5300],'560060':[13.0650,77.5100],'560061':[12.8666,77.5800],
+  '560062':[12.9063,77.5857],'560063':[12.9215,77.5870],'560064':[13.0850,77.6020],
+  '560066':[12.9660,77.7562],'560067':[12.8450,77.6600],'560068':[12.8377,77.6777],
+  '560070':[12.9330,77.5820],'560072':[12.9868,77.7701],'560075':[12.9714,77.5025],
+  '560076':[12.9650,77.5200],'560077':[12.9980,77.5600],'560078':[12.8993,77.5827],
+  '560079':[13.0090,77.5549],'560082':[13.0250,77.5410],'560083':[13.0470,77.5340],
+  '560084':[12.9280,77.5580],'560085':[12.9140,77.5450],'560086':[13.0050,77.5350],
+  '560087':[12.9900,77.5130],'560092':[12.9352,77.6245],'560093':[12.9379,77.6265],
+  '560094':[12.9116,77.6389],'560095':[12.8617,77.6830],'560096':[12.9450,77.7350],
+  '560097':[13.0050,77.6700],'560098':[13.0445,77.6350],'560099':[13.1007,77.5963],
+  '560100':[13.1050,77.5970],'560102':[12.9100,77.6450],'560103':[12.8700,77.6200],
+  '560109':[13.0100,77.6900],'560111':[13.0900,77.5980],'560116':[13.0900,77.4900],
+  // Near Bengaluru
+  '562106':[13.2467,77.7173],'562125':[13.0700,77.7980],
+  '562149':[13.1200,77.7700],'562157':[13.4355,77.7315],'583201':[15.1394,76.9214],
+  // Delhi / NCR
+  '110026':[28.5494,77.2001],'110030':[28.5244,77.1855],'110048':[28.5263,77.2159],
+  '110049':[28.5200,77.1560],'110070':[28.6189,77.0587],
+  '201301':[28.5355,77.3910],'201303':[28.5700,77.3600],
+  // Gurugram
+  '122001':[28.4595,77.0266],'122002':[28.4740,77.0460],
+  '122003':[28.4900,77.0800],'122004':[28.5012,77.0989],'122011':[28.4280,76.9870],
+  // Others
+  '126101':[29.3161,76.3163],'311001':[25.3470,74.6313],'335512':[29.9166,73.8779],
+  '342003':[26.2389,73.0243],'380015':[23.0225,72.5714],
+  '444606':[20.9320,77.7523],'490020':[21.2167,81.4167],
+};
+
+function init(text) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) { alert('Could not parse CSV.'); return; }
+  headers = rows[0];
+  allRows = rows.slice(1).filter(r => r.some(c => c));
+
+  // Inject synthetic PIN Code + City columns right after Customer Address
+  const addrIdx = headers.indexOf('Customer Address');
+  const insertAt = addrIdx >= 0 ? addrIdx + 1 : headers.length;
+  headers = [...headers.slice(0, insertAt), 'PIN Code', 'City', ...headers.slice(insertAt)];
+  allRows = allRows.map(row => {
+    const addr = addrIdx >= 0 ? (row[addrIdx] || '') : '';
+    const pin = extractPIN(addr);
+    return [...row.slice(0, insertAt), pin, pinToCity(pin), ...row.slice(insertAt)];
+  });
+
+  visibleCols = new Set(headers.filter(h => !HIDDEN_COLS_DEFAULT.has(h)));
+
+  buildColToggles();
+  buildStaticFilters();
+  buildTable();
+  buildStats();
+
+  document.getElementById('dropZone').style.display = 'none';
+  document.getElementById('mainContent').style.display = '';
+  document.getElementById('tabBar').style.display = '';
+  currentTab = 'table';
+}
+
+// ── Stats ────────────────────────────────────────────────────────────────────
+function buildStats() {
+  const total = allRows.length;
+  const active = allRows.filter(r => cellVal(r,'Status') === 'ACTIVE').length;
+  const cancelled = allRows.filter(r => ['CANCELLED','CUSTOMER_CANCELLED'].includes(cellVal(r,'Status'))).length;
+  const initialized = allRows.filter(r => cellVal(r,'Status') === 'INITIALIZED').length;
+  const duo = allRows.filter(r => cellVal(r,'Plan Tier') === 'duo').length;
+  const family = allRows.filter(r => cellVal(r,'Plan Tier') === 'family').length;
+  const ind = allRows.filter(r => cellVal(r,'Plan Tier') === 'individual').length;
+
+  const retentions = allRows.map(r => parseFloat(cellVal(r,'Retention (months)'))).filter(n => !isNaN(n));
+  const avgRet = retentions.length ? (retentions.reduce((a,b)=>a+b,0)/retentions.length).toFixed(1) : '—';
+
+  const html = [
+    stat('Total', total),
+    stat('Active', active, `${((active/total)*100).toFixed(0)}% of total`),
+    stat('Cancelled', cancelled),
+    stat('Initialized', initialized),
+    stat('Individual', ind, 'plan tier'),
+    stat('Duo', duo, 'plan tier'),
+    stat('Family', family, 'plan tier'),
+    stat('Avg Retention', avgRet, 'months'),
+  ].join('');
+
+  document.getElementById('statsRow').innerHTML = html;
+}
+
+function stat(label, value, sub='') {
+  return `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+}
+
+// ── Filters ──────────────────────────────────────────────────────────────────
+function buildStaticFilters() {
+  buildFilterGroup('statusFilters', 'Status', 'Status');
+  buildFilterGroup('tierFilters', 'Plan Tier', 'Plan Tier');
+  buildFilterGroup('sourceFilters', 'Source', 'Source');
+}
+
+function buildFilterGroup(elId, colName, groupKey) {
+  const el = document.getElementById(elId);
+  const vals = [...new Set(allRows.map(r => cellVal(r, colName)).filter(Boolean))].sort();
+  const all = document.createElement('button');
+  all.className = 'filter-btn active';
+  all.textContent = 'All';
+  all.dataset.group = groupKey;
+  all.dataset.val = '';
+  all.onclick = () => setFilter(groupKey, '', all);
+  el.appendChild(all);
+
+  vals.forEach(v => {
+    const btn = document.createElement('button');
+    btn.className = 'filter-btn';
+    btn.textContent = v || '(none)';
+    btn.dataset.group = groupKey;
+    btn.dataset.val = v;
+    btn.onclick = () => setFilter(groupKey, v, btn);
+    el.appendChild(btn);
+  });
+}
+
+function setFilter(group, val, btn) {
+  const parent = btn.parentElement;
+  parent.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (val === '') delete activeFilters[group];
+  else activeFilters[group] = val;
+  applyFilters();
+}
+
+// ── Column toggles ────────────────────────────────────────────────────────────
+function buildColToggles() {
+  const wrap = document.getElementById('colToggles');
+  wrap.innerHTML = '<span class="col-toggle-label">Columns:</span>';
+  headers.forEach(h => {
+    const btn = document.createElement('button');
+    btn.className = 'col-toggle' + (visibleCols.has(h) ? ' active' : '');
+    btn.textContent = h;
+    btn.onclick = () => {
+      if (visibleCols.has(h)) visibleCols.delete(h);
+      else visibleCols.add(h);
+      btn.classList.toggle('active');
+      renderTable(filteredRows());
+    };
+    wrap.appendChild(btn);
+  });
+}
+
+// ── Table ────────────────────────────────────────────────────────────────────
+function buildTable() {
+  applyFilters();
+}
+
+function applyFilters() {
+  renderTable(filteredRows());
+}
+
+function filteredRows() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  return allRows.filter(row => {
+    for (const [group, val] of Object.entries(activeFilters)) {
+      if (cellVal(row, group) !== val) return false;
+    }
+    if (search) {
+      const searchCols = ['Customer Name','Customer Phone','Customer Address','PG Customer Email','PG Customer Name','PIN Code','City'];
+      const matched = searchCols.some(c => cellVal(row, c).toLowerCase().includes(search));
+      if (!matched) {
+        const full = row.join(' ').toLowerCase();
+        if (!full.includes(search)) return false;
+      }
+    }
+    return true;
+  });
+}
+
+function renderTable(rows) {
+  const cols = headers.filter(h => visibleCols.has(h));
+
+  // Header
+  const thead = document.getElementById('tableHead');
+  thead.innerHTML = '';
+  const tr = document.createElement('tr');
+  cols.forEach((h, i) => {
+    const th = document.createElement('th');
+    const origIdx = headers.indexOf(h);
+    const arrow = sortCol === origIdx ? (sortDir === 1 ? '▲' : '▼') : '▲';
+    th.innerHTML = `${h} <span class="sort-arrow">${arrow}</span>`;
+    if (sortCol === origIdx) th.classList.add('sorted');
+    th.onclick = () => {
+      if (sortCol === origIdx) sortDir *= -1;
+      else { sortCol = origIdx; sortDir = 1; }
+      renderTable(filteredRows());
+    };
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+
+  // Sort
+  if (sortCol >= 0) {
+    rows = [...rows].sort((a, b) => {
+      const av = a[sortCol] || '', bv = b[sortCol] || '';
+      const an = parseFloat(av), bn = parseFloat(bv);
+      if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
+      return av.localeCompare(bv) * sortDir;
+    });
+  }
+
+  document.getElementById('rowCount').textContent = `Showing ${rows.length} of ${allRows.length} subscriptions`;
+
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = '';
+
+  if (rows.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="${cols.length}" class="no-results">No matching subscriptions</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    cols.forEach(h => {
+      const td = document.createElement('td');
+      if (NOWRAP_COLS.has(h)) td.classList.add('nowrap');
+      const val = row[headers.indexOf(h)] || '';
+      td.innerHTML = formatCell(h, val);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Cell formatting ───────────────────────────────────────────────────────────
+function formatCell(col, val) {
+  if (!val) return '<span style="color:#334155">—</span>';
+
+  if (col === 'Status') {
+    const map = {
+      'ACTIVE': 'badge-active',
+      'CANCELLED': 'badge-cancelled',
+      'CUSTOMER_CANCELLED': 'badge-customer-cancelled',
+      'INITIALIZED': 'badge-initialized',
+    };
+    return `<span class="badge ${map[val] || ''}">${val}</span>`;
+  }
+
+  if (col === 'Plan Tier') {
+    const map = { individual:'badge-tier-individual', duo:'badge-tier-duo', family:'badge-tier-family' };
+    return `<span class="badge ${map[val] || ''}">${val}</span>`;
+  }
+
+  if (col === 'Source') {
+    return `<span class="badge badge-source">${val}</span>`;
+  }
+
+  if (col === 'Last Payment Status') {
+    const cls = val === 'SUCCESS' ? 'badge-success' : val === 'FAILED' ? 'badge-failed' : '';
+    return `<span class="badge ${cls}">${val}</span>`;
+  }
+
+  if (col === 'Pre-Conversion Demo' || col === 'Onboarding Demo Mode') {
+    return val.split(';').map(v => v.trim()).filter(Boolean)
+              .map(v => `<span class="demo-tag">${v}</span>`).join('') || '<span style="color:#334155">—</span>';
+  }
+
+  if (col === 'User UIDs' || col === 'User Phone Numbers') {
+    return val.split(';').map(v => v.trim()).filter(Boolean)
+              .map(v => `<span class="uid-chip" title="${v}">${v}</span>`).join('') || '<span style="color:#334155">—</span>';
+  }
+
+  if (col === 'PIN Code') {
+    return `<span style="font-family:monospace;font-size:12px;color:#e2e8f0;letter-spacing:.5px">${val}</span>`;
+  }
+
+  if (col === 'City') {
+    const [city, area] = val.split(' – ');
+    if (area) return `<span style="color:#e2e8f0">${area}</span><span style="color:#475569;font-size:11px;margin-left:4px">${city}</span>`;
+    return `<span style="color:#e2e8f0">${val}</span>`;
+  }
+
+  if (col === 'Customer Address') {
+    return `<span class="addr">${escHtml(val.replace(/\n/g, ', '))}</span>`;
+  }
+
+  if (col.includes('Date')) {
+    if (val === 'present') return '<span style="color:#86efac">present</span>';
+    const d = new Date(val);
+    if (!isNaN(d)) return `<span title="${val}">${d.toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'})}</span>`;
+  }
+
+  if (col === 'Retention (months)') {
+    const n = parseFloat(val);
+    const color = n >= 12 ? '#86efac' : n >= 6 ? '#fde68a' : '#94a3b8';
+    return `<span style="color:${color};font-weight:600">${val}m</span>`;
+  }
+
+  return escHtml(val);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function cellVal(row, colName) {
+  const idx = headers.indexOf(colName);
+  return idx >= 0 ? (row[idx] || '') : '';
+}
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+let mapTileLayer = null;
+
+function applyTheme(theme) {
+  document.body.classList.toggle('light', theme === 'light');
+  document.getElementById('themeToggle').textContent = theme === 'light' ? '☀️' : '🌙';
+  if (leafletMap && mapTileLayer) {
+    leafletMap.removeLayer(mapTileLayer);
+    mapTileLayer = L.tileLayer(theme === 'light' ? TILE_LIGHT : TILE_DARK, {
+      attribution: '© OpenStreetMap © CARTO', maxZoom: 19
+    }).addTo(leafletMap);
+    if (currentTab === 'map') renderMap();
+  }
+}
+
+function toggleTheme() {
+  const next = document.body.classList.contains('light') ? 'dark' : 'light';
+  localStorage.setItem('ferraTheme', next);
+  applyTheme(next);
+}
+
+// Apply saved theme on load
+applyTheme(localStorage.getItem('ferraTheme') || 'dark');
+
+// ── Cluster radius slider ─────────────────────────────────────────────────────
+let clusterDebounce = null;
+function onClusterSliderChange(val) {
+  clusterRadius = parseInt(val, 10);
+  document.getElementById('ccValue').textContent = clusterRadius === 0 ? 'Off' : `${clusterRadius} px`;
+  localStorage.setItem('ferraClusterRadius', clusterRadius);
+  clearTimeout(clusterDebounce);
+  clusterDebounce = setTimeout(() => {
+    if (currentTab === 'map' && allRows.length) renderMap();
+  }, 80);
+}
+
+// Restore saved slider value on load
+window.addEventListener('DOMContentLoaded', () => {
+  const slider = document.getElementById('clusterSlider');
+  if (slider) {
+    slider.value = clusterRadius;
+    document.getElementById('ccValue').textContent = clusterRadius === 0 ? 'Off' : `${clusterRadius} px`;
+  }
+});
+
+// ── Time travel ───────────────────────────────────────────────────────────────
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function initTimeTravel() {
+  if (!allRows.length) return;
+  const startIdx = headers.indexOf('Start Date');
+  const times = allRows.map(r => Date.parse(r[startIdx])).filter(t => !isNaN(t));
+  if (!times.length) return;
+
+  timeMin = Math.min(...times);
+  timeMax = Math.max(...times);
+  if (timeCutoff == null) timeCutoff = timeMax;
+
+  document.getElementById('timeTravel').style.display = '';
+  document.getElementById('ttMin').textContent = fmtDate(timeMin);
+  document.getElementById('ttMax').textContent = fmtDate(timeMax);
+  document.getElementById('ttTotal').textContent = times.length;
+
+  const slider = document.getElementById('ttSlider');
+  const pct = ((timeCutoff - timeMin) / (timeMax - timeMin)) * 100;
+  slider.value = pct;
+  document.getElementById('ttDate').textContent = fmtDate(timeCutoff);
+}
+
+function onTimeSliderChange(val) {
+  if (timeMin == null || timeMax == null) return;
+  timeCutoff = timeMin + ((timeMax - timeMin) * (parseFloat(val) / 100));
+  document.getElementById('ttDate').textContent = fmtDate(timeCutoff);
+  renderMap();
+}
+
+function toggleTimePlay() {
+  if (timePlaying) pauseTimePlay();
+  else startTimePlay();
+}
+
+function startTimePlay() {
+  if (timeMin == null || timeMax == null) return;
+  // If at the end, restart from the beginning
+  if (timeCutoff >= timeMax) {
+    timeCutoff = timeMin;
+    document.getElementById('ttSlider').value = 0;
+  }
+  timePlaying = true;
+  document.getElementById('ttPlayBtn').textContent = '❚❚';
+
+  const span = timeMax - timeMin;
+  // Base duration: 30 seconds at 1x speed across the full range
+  const msPerRealSec = span / 30;
+  let lastFrame = performance.now();
+
+  function tick(now) {
+    if (!timePlaying) return;
+    const dt = (now - lastFrame) / 1000;
+    lastFrame = now;
+    timeCutoff += msPerRealSec * dt * timePlaySpeed;
+    if (timeCutoff >= timeMax) {
+      timeCutoff = timeMax;
+      pauseTimePlay();
+    }
+    const pct = ((timeCutoff - timeMin) / span) * 100;
+    document.getElementById('ttSlider').value = pct;
+    document.getElementById('ttDate').textContent = fmtDate(timeCutoff);
+    renderMap();
+    if (timePlaying) timePlayRAF = requestAnimationFrame(tick);
+  }
+  timePlayRAF = requestAnimationFrame(tick);
+}
+
+function pauseTimePlay() {
+  timePlaying = false;
+  if (timePlayRAF) { cancelAnimationFrame(timePlayRAF); timePlayRAF = null; }
+  const btn = document.getElementById('ttPlayBtn');
+  if (btn) btn.textContent = '▶';
+}
+
+// ── Cinematic zoom ────────────────────────────────────────────────────────────
+let cinemaStart = null, cinemaEnd = null;
+
+function fmtView(v) {
+  return `z${v.zoom} · ${v.center.lat.toFixed(2)}, ${v.center.lng.toFixed(2)}`;
+}
+
+function setCinemaStart() {
+  if (!leafletMap) return;
+  cinemaStart = { center: leafletMap.getCenter(), zoom: leafletMap.getZoom() };
+  const status = document.getElementById('cinemaStartStatus');
+  status.textContent = fmtView(cinemaStart);
+  status.classList.add('set');
+  document.getElementById('cinemaStartBtn').classList.add('captured');
+  updatePlayBtn();
+}
+
+function setCinemaEnd() {
+  if (!leafletMap) return;
+  cinemaEnd = { center: leafletMap.getCenter(), zoom: leafletMap.getZoom() };
+  const status = document.getElementById('cinemaEndStatus');
+  status.textContent = fmtView(cinemaEnd);
+  status.classList.add('set');
+  document.getElementById('cinemaEndBtn').classList.add('captured');
+  updatePlayBtn();
+}
+
+function updatePlayBtn() {
+  document.getElementById('cinemaPlayBtn').disabled = !(cinemaStart && cinemaEnd);
+}
+
+function playCinema() {
+  if (!cinemaStart || !cinemaEnd || !leafletMap) return;
+  const duration = parseInt(document.getElementById('cinemaDuration').value, 10);
+
+  // Snap to start instantly, then smoothly fly to end
+  leafletMap.setView(cinemaStart.center, cinemaStart.zoom, { animate: false });
+  setTimeout(() => {
+    leafletMap.flyTo(cinemaEnd.center, cinemaEnd.zoom, {
+      duration,
+      easeLinearity: 0.25,
+    });
+  }, 150);
+}
+
+let smoothZoomRAF = null;
+
+function smoothZoom(delta) {
+  if (!leafletMap) return;
+  if (smoothZoomRAF) {
+    cancelAnimationFrame(smoothZoomRAF);
+    smoothZoomRAF = null;
+  }
+  const startZ = leafletMap.getZoom();
+  const targetZ = Math.max(
+    leafletMap.getMinZoom(),
+    Math.min(leafletMap.getMaxZoom(), startZ + delta)
+  );
+  if (targetZ === startZ) return;
+
+  const center   = leafletMap.getCenter();
+  const duration = 1500; // ms
+  const t0       = performance.now();
+  let lastRound  = Math.round(startZ);
+
+  function frame(now) {
+    const t = Math.min((now - t0) / duration, 1);
+    // ease in-out cubic
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const z = startZ + (targetZ - startZ) * e;
+
+    leafletMap.setView(center, z, { animate: false });
+
+    // When the rounded zoom crosses an integer boundary, force MarkerCluster
+    // to re-evaluate so bubbles split mid-flight instead of all at the end.
+    const r = Math.round(z);
+    if (r !== lastRound) {
+      lastRound = r;
+      leafletMap.fire('zoomend');
+    }
+
+    if (t < 1) {
+      smoothZoomRAF = requestAnimationFrame(frame);
+    } else {
+      smoothZoomRAF = null;
+      leafletMap.fire('zoomend');
+    }
+  }
+  smoothZoomRAF = requestAnimationFrame(frame);
+}
+
+function resetCinema() {
+  cinemaStart = null;
+  cinemaEnd = null;
+  ['cinemaStartStatus', 'cinemaEndStatus'].forEach(id => {
+    const el = document.getElementById(id);
+    el.textContent = '—';
+    el.classList.remove('set');
+  });
+  ['cinemaStartBtn', 'cinemaEndBtn'].forEach(id => {
+    document.getElementById(id).classList.remove('captured');
+  });
+  updatePlayBtn();
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabTable').classList.toggle('active', tab === 'table');
+  document.getElementById('tabMap').classList.toggle('active', tab === 'map');
+  document.getElementById('mainContent').style.display = tab === 'table' ? '' : 'none';
+  document.getElementById('searchWrap').style.display = tab === 'table' ? '' : 'none';
+  const mapView = document.getElementById('mapView');
+  if (tab === 'map') {
+    mapView.classList.add('visible');
+    initTimeTravel();
+    renderMap();
+  } else {
+    mapView.classList.remove('visible');
+    pauseTimePlay();
+  }
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+function renderMap() {
+  if (!leafletMap) {
+    leafletMap = L.map('leafletMap', { zoomControl: true }).setView([13.0, 77.58], 11);
+    const isLight = document.body.classList.contains('light');
+    mapTileLayer = L.tileLayer(isLight ? TILE_LIGHT : TILE_DARK, {
+      attribution: '© OpenStreetMap © CARTO',
+      maxZoom: 19
+    }).addTo(leafletMap);
+    drawBangaloreOutline();
+  }
+
+  if (leafletMap._clusterGroup) {
+    leafletMap.removeLayer(leafletMap._clusterGroup);
+  }
+
+  const pinIdx    = headers.indexOf('PIN Code');
+  const cityIdx   = headers.indexOf('City');
+  const nameIdx   = headers.indexOf('Customer Name');
+  const phoneIdx  = headers.indexOf('Customer Phone');
+  const statusIdx = headers.indexOf('Status');
+
+  const clusterGroup = L.markerClusterGroup({
+    maxClusterRadius: clusterRadius,
+    spiderfyOnMaxZoom: clusterRadius > 0,
+    showCoverageOnHover: clusterRadius > 0,
+    iconCreateFunction(cluster) {
+      const markers = cluster.getAllChildMarkers();
+      const total  = markers.length;
+      const active = markers.filter(m => m.options.isActive).length;
+      const ratio  = active / total;
+      const color  = ratio >= 0.7 ? '#22c55e' : ratio >= 0.4 ? '#f59e0b' : '#ef4444';
+      const size   = total < 10 ? 36 : total < 30 ? 44 : total < 100 ? 52 : 62;
+      const fs     = total < 10 ? 14 : total < 100 ? 13 : 12;
+      return L.divIcon({
+        html: `<div style="
+          width:${size}px;height:${size}px;border-radius:50%;
+          background:${color}22;border:2px solid ${color};
+          display:flex;align-items:center;justify-content:center;
+          font-weight:700;font-size:${fs}px;color:${color};
+          box-shadow:0 0 14px ${color}50">${total}</div>`,
+        className: '',
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+    },
+  });
+
+  const startIdx = headers.indexOf('Start Date');
+  const rowsForMap = allRows.filter(row => {
+    if (timeCutoff == null) return true;
+    const sd = row[startIdx];
+    if (!sd) return false;
+    const t = Date.parse(sd);
+    return !isNaN(t) && t <= timeCutoff;
+  });
+
+  rowsForMap.forEach(row => {
+    const pin = row[pinIdx] || '';
+    if (!pin) return;
+    const coords = PIN_COORDS[pin];
+    if (!coords) return;
+
+    const status   = row[statusIdx] || '';
+    const isActive = status === 'ACTIVE';
+    const name     = row[nameIdx] || '—';
+    const phone    = row[phoneIdx] || '';
+    const city     = row[cityIdx] || pin;
+    const dotColor = isActive ? '#22c55e' : status === 'INITIALIZED' ? '#60a5fa' : '#ef4444';
+
+    const dotBorder = document.body.classList.contains('light') ? '#ffffff' : '#1a1d27';
+    const icon = L.divIcon({
+      html: `<div style="width:11px;height:11px;border-radius:50%;
+        background:${dotColor};border:2px solid ${dotBorder};
+        box-shadow:0 0 6px ${dotColor}80"></div>`,
+      className: '',
+      iconSize: [11, 11],
+      iconAnchor: [5, 5],
+    });
+
+    const statusLabel = status === 'CUSTOMER_CANCELLED' ? 'CUST. CANCELLED' : status;
+    const popup = `
+      <div class="pop-city">${name}</div>
+      <div style="font-size:11px;color:#64748b;margin-bottom:6px">${phone}</div>
+      <div style="font-size:11px;font-weight:600;color:${dotColor}">${statusLabel}</div>
+      <div style="margin-top:5px;font-size:11px;color:#475569">${city} &middot; ${pin}</div>`;
+
+    const marker = L.marker(coords, { icon, isActive });
+    marker.bindPopup(popup, { maxWidth: 220 });
+    clusterGroup.addLayer(marker);
+  });
+
+  leafletMap.addLayer(clusterGroup);
+  leafletMap._clusterGroup = clusterGroup;
+
+  const ttCount = document.getElementById('ttCount');
+  if (ttCount) ttCount.textContent = rowsForMap.length;
+}
+
+// Approximate BBMP (Bengaluru city) boundary, traced clockwise from NW
+const BLR_OUTLINE = [
+  [13.139, 77.480], // NW – Hesaraghatta side
+  [13.160, 77.560], // N – Yelahanka north
+  [13.150, 77.625], // N – Jakkur / Bagalur road
+  [13.115, 77.690], // NE – Hennur / Horamavu outer
+  [13.060, 77.740], // E – KR Puram outer
+  [13.005, 77.785], // E – Whitefield
+  [12.940, 77.790], // SE – Varthur
+  [12.880, 77.755], // SE – Sarjapur road
+  [12.840, 77.700], // S – Electronic City east
+  [12.820, 77.640], // S – Bommasandra / Begur
+  [12.840, 77.570], // SW – Kanakapura road
+  [12.875, 77.495], // SW – Kengeri
+  [12.945, 77.460], // W – Mysuru road
+  [13.020, 77.450], // W – Magadi road
+  [13.080, 77.460], // NW – Peenya outer
+];
+
+function drawBangaloreOutline() {
+  const isLight = document.body.classList.contains('light');
+  const stroke = isLight ? '#7c3aed' : '#a78bfa';
+  L.polygon(BLR_OUTLINE, {
+    color: stroke,
+    weight: 2.5,
+    opacity: 0.9,
+    fillColor: stroke,
+    fillOpacity: 0.04,
+    dashArray: '6 4',
+    interactive: false,
+  }).addTo(leafletMap).bindTooltip('Bengaluru (BBMP, approx.)', { sticky: true });
+}
+</script>
+</body>
+</html>
