@@ -43,6 +43,9 @@
   window.firebaseSavePins = async (manualPins) => {
     await setDoc(docRef, { manualPins, updatedAt: serverTimestamp() }, { merge: true });
   };
+  window.firebaseSaveMapLinks = async (mapLinks) => {
+    await setDoc(docRef, { mapLinks, updatedAt: serverTimestamp() }, { merge: true });
+  };
   window.firebaseLoadCSV = async () => {
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
@@ -51,6 +54,7 @@
       csv: data.csv,
       withSensorIds: data.withSensorIds || [],
       manualPins: data.manualPins || {},
+      mapLinks: data.mapLinks || {},
       updatedAt: data.updatedAt?.toDate?.() ?? null
     };
   };
@@ -260,6 +264,33 @@
   body.light .pin-value.empty { color: #cbd5e1; }
   body.light .pin-manual-tag { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
   body.light .pin-edit-input { background: #fff; color: #1e293b; border-color: #4f46e5; }
+
+  /* Map link cell */
+  .map-cell { display: inline-flex; align-items: center; gap: 4px; }
+  .map-link {
+    display: inline-flex; align-items: center; gap: 3px;
+    color: #93c5fd; text-decoration: none; font-size: 11px; font-weight: 500;
+    padding: 2px 8px; border-radius: 12px;
+    background: #1e3a5f; border: 1px solid #2d4a7a;
+  }
+  .map-link:hover { background: #1e40af; color: #fff; border-color: #3b82f6; }
+  .map-edit-btn {
+    background: transparent; border: none; cursor: pointer;
+    padding: 2px 4px; opacity: 0.4; font-size: 11px; color: inherit;
+    border-radius: 3px;
+  }
+  .map-edit-btn:hover { opacity: 1; background: #1e2235; }
+  .map-add {
+    color: #475569; cursor: pointer; font-size: 11px;
+    padding: 2px 8px; border: 1px dashed #334155; border-radius: 12px;
+    background: transparent;
+  }
+  .map-add:hover { color: #c7d2fe; border-color: #4f46e5; }
+  body.light .map-link { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+  body.light .map-link:hover { background: #1e40af; color: #fff; }
+  body.light .map-edit-btn:hover { background: #f1f5f9; }
+  body.light .map-add { color: #cbd5e1; border-color: #cbd5e1; }
+  body.light .map-add:hover { color: #4338ca; border-color: #4f46e5; }
 
   .upload-btn {
     background: #4f46e5;
@@ -908,7 +939,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.007</span>
+  <span class="version-tag">v1.008</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
@@ -1080,6 +1111,7 @@ let currentTab = 'table', leafletMap = null;
 let clusterRadius = parseInt(localStorage.getItem('ferraClusterRadius') ?? '60', 10);
 let withSensorIds = new Set();
 let manualPins = new Map(); // Subscription ID -> manually entered PIN
+let mapLinks   = new Map(); // Subscription ID -> Google Maps URL
 let timeMin = null, timeMax = null, timeCutoff = null;
 let timePlaying = false, timePlaySpeed = 1, timePlayRAF = null;
 
@@ -1095,7 +1127,7 @@ const HIDDEN_COLS_DEFAULT = new Set([
 // Columns that should not wrap
 const NOWRAP_COLS = new Set([
   'Status','Plan Tier','Source','Start Date','End Date','Retention (months)',
-  'Last Payment Status','Last Payment Date','Comments Count','PIN Code','City','Sensor'
+  'Last Payment Status','Last Payment Date','Comments Count','PIN Code','City','Sensor','Map Link'
 ]);
 
 // ── Load file ────────────────────────────────────────────────────────────────
@@ -1253,6 +1285,7 @@ async function tryLoadFromCloud() {
       currentCSVText = data.csv;
       withSensorIds = new Set(data.withSensorIds || []);
       manualPins = new Map(Object.entries(data.manualPins || {}));
+      mapLinks   = new Map(Object.entries(data.mapLinks   || {}));
       init(data.csv);
       document.getElementById('filename').textContent = 'cloud dataset';
       setSyncStatus('ok', '☁ Synced · ' + fmtSyncTime(data.updatedAt));
@@ -1262,6 +1295,42 @@ async function tryLoadFromCloud() {
   } catch (err) {
     console.error('Firebase load failed', err);
     setSyncStatus('error', '☁ Load failed');
+  }
+}
+
+async function editMapLink(subId) {
+  if (!subId) return;
+  const current = mapLinks.get(subId) || '';
+  const input = prompt(
+    'Paste Google Maps URL\n(leave blank to remove):',
+    current
+  );
+  if (input === null) return;
+  const trimmed = input.trim();
+  if (trimmed && !/^https?:\/\//i.test(trimmed)) {
+    alert('Link must start with http:// or https://');
+    return;
+  }
+  if (trimmed) mapLinks.set(subId, trimmed);
+  else         mapLinks.delete(subId);
+
+  const linkIdx = headers.indexOf('Map Link');
+  const sidIdx  = headers.indexOf('Subscription ID');
+  if (linkIdx >= 0 && sidIdx >= 0) {
+    allRows.forEach(row => {
+      if (row[sidIdx] === subId) row[linkIdx] = mapLinks.get(subId) || '';
+    });
+  }
+  applyFilters();
+
+  if (!window.firebaseSaveMapLinks) return;
+  setSyncStatus('syncing', '☁ Saving link…');
+  try {
+    await window.firebaseSaveMapLinks(Object.fromEntries(mapLinks));
+    setSyncStatus('ok', '☁ Synced · just now');
+  } catch (err) {
+    console.error('Map link save failed', err);
+    setSyncStatus('error', '☁ Save failed');
   }
 }
 
@@ -1606,14 +1675,15 @@ function init(text) {
   const addrIdx    = origHeaders.indexOf('Customer Address');
   const insertAt   = addrIdx >= 0 ? addrIdx + 1 : origHeaders.length;
 
-  // Inject synthetic PIN Code + City + Sensor columns right after Customer Address
-  headers = [...origHeaders.slice(0, insertAt), 'PIN Code', 'City', 'Sensor', ...origHeaders.slice(insertAt)];
+  // Inject synthetic PIN Code + City + Sensor + Map Link columns right after Customer Address
+  headers = [...origHeaders.slice(0, insertAt), 'PIN Code', 'City', 'Sensor', 'Map Link', ...origHeaders.slice(insertAt)];
   allRows = rows.slice(1).filter(r => r.some(c => c)).map(row => {
     const addr = addrIdx >= 0 ? (row[addrIdx] || '') : '';
     const sid  = subIdIdx >= 0 ? (row[subIdIdx] || '') : '';
     const pin  = manualPins.get(sid) || extractPIN(addr);
     const sensor = withSensorIds.has(sid) ? 'With Sensor' : 'Without Sensor';
-    return [...row.slice(0, insertAt), pin, pinToCity(pin), sensor, ...row.slice(insertAt)];
+    const link  = mapLinks.get(sid) || '';
+    return [...row.slice(0, insertAt), pin, pinToCity(pin), sensor, link, ...row.slice(insertAt)];
   });
 
   visibleCols = new Set(headers.filter(h => !HIDDEN_COLS_DEFAULT.has(h)));
@@ -1807,6 +1877,37 @@ function renderTable(rows) {
         span.title = 'Click to toggle';
         if (sid) span.onclick = () => toggleSensor(sid);
         td.appendChild(span);
+      } else if (h === 'Map Link') {
+        const sid = sidIdx >= 0 ? row[sidIdx] : '';
+        const link = sid ? mapLinks.get(sid) : '';
+        const wrap = document.createElement('span');
+        wrap.className = 'map-cell';
+        if (link) {
+          const a = document.createElement('a');
+          a.href = link;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = 'map-link';
+          a.innerHTML = '📍 Open';
+          a.title = link;
+          wrap.appendChild(a);
+          if (sid) {
+            const edit = document.createElement('button');
+            edit.className = 'map-edit-btn';
+            edit.innerHTML = '✎';
+            edit.title = 'Edit / remove link';
+            edit.onclick = (e) => { e.preventDefault(); e.stopPropagation(); editMapLink(sid); };
+            wrap.appendChild(edit);
+          }
+        } else {
+          const add = document.createElement('span');
+          add.className = 'map-add';
+          add.textContent = '+ Add link';
+          add.title = sid ? 'Add Google Maps link' : 'No Subscription ID';
+          if (sid) add.onclick = () => editMapLink(sid);
+          wrap.appendChild(add);
+        }
+        td.appendChild(wrap);
       } else if (h === 'PIN Code') {
         const sid = sidIdx >= 0 ? row[sidIdx] : '';
         const isManual = sid && manualPins.has(sid);
