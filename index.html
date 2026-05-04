@@ -9,6 +9,38 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+  import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
+    from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAXw4AB59Km4N92Y67ODaiOJBmvNxmJdtw",
+    authDomain: "tidal-velocity-275918.firebaseapp.com",
+    databaseURL: "https://tidal-velocity-275918.firebaseio.com",
+    projectId: "tidal-velocity-275918",
+    storageBucket: "tidal-velocity-275918.firebasestorage.app",
+    messagingSenderId: "359357212651",
+    appId: "1:359357212651:web:263fdce4f7682ce3131bae",
+    measurementId: "G-1CMT3KN3BX"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
+  const docRef = doc(db, "ctracker", "current");
+
+  window.firebaseSaveCSV = async (csvText) => {
+    await setDoc(docRef, { csv: csvText, updatedAt: serverTimestamp() });
+  };
+  window.firebaseLoadCSV = async () => {
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    return { csv: data.csv, updatedAt: data.updatedAt?.toDate?.() ?? null };
+  };
+  window.firebaseReady = true;
+  document.dispatchEvent(new Event('firebase-ready'));
+</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -48,6 +80,20 @@
     background: #eef2ff;
     border-color: #c7d2fe;
   }
+  .sync-status {
+    font-size: 11px;
+    color: #64748b;
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+  }
+  .sync-status.ok      { color: #86efac; background: #14532d33; border-color: #14532d; }
+  .sync-status.syncing { color: #fde68a; background: #78350f33; border-color: #78350f; }
+  .sync-status.error   { color: #fca5a5; background: #3f151533; border-color: #3f1515; }
+  body.light .sync-status.ok      { color: #166534; background: #dcfce7; border-color: #86efac; }
+  body.light .sync-status.syncing { color: #92400e; background: #fef3c7; border-color: #fde68a; }
+  body.light .sync-status.error   { color: #991b1b; background: #fee2e2; border-color: #fca5a5; }
 
   .upload-btn {
     background: #4f46e5;
@@ -696,11 +742,12 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.002</span>
+  <span class="version-tag">v1.003</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
   <span class="filename" id="filename">No file loaded</span>
+  <span class="sync-status" id="syncStatus">☁ Connecting…</span>
   <div class="tabs" id="tabBar" style="display:none">
     <button class="tab-btn active" id="tabTable" onclick="switchTab('table')">Table</button>
     <button class="tab-btn" id="tabMap" onclick="switchTab('map')">Map</button>
@@ -713,10 +760,10 @@
 </div>
 
 <div class="drop-zone" id="dropZone">
-  <div class="big-icon">📄</div>
-  <p>Upload or drop your subscriptions CSV here</p>
-  <p class="hint">Supports the Ferra subscriptions export format</p>
-  <button class="upload-btn" style="margin-top:8px" onclick="document.getElementById('fileInput').click()">Choose file</button>
+  <div class="big-icon" id="dropIcon">📄</div>
+  <p id="dropMsg">Upload or drop your subscriptions CSV here</p>
+  <p class="hint" id="dropHint">Supports the Ferra subscriptions export format</p>
+  <button class="upload-btn" id="dropChooseBtn" style="margin-top:8px" onclick="document.getElementById('fileInput').click()">Choose file</button>
 </div>
 
 <div id="mapView">
@@ -880,8 +927,69 @@ body.addEventListener('drop', e => {
 function loadFile(file) {
   document.getElementById('filename').textContent = file.name;
   const reader = new FileReader();
-  reader.onload = e => init(e.target.result);
+  reader.onload = async e => {
+    const text = e.target.result;
+    init(text);
+    await saveToCloud(text);
+  };
   reader.readAsText(file);
+}
+
+// ── Firebase sync ─────────────────────────────────────────────────────────────
+function setSyncStatus(state, label) {
+  const el = document.getElementById('syncStatus');
+  el.className = 'sync-status' + (state ? ' ' + state : '');
+  el.textContent = label;
+}
+
+async function saveToCloud(csvText) {
+  if (!window.firebaseReady || !window.firebaseSaveCSV) return;
+  setSyncStatus('syncing', '☁ Saving…');
+  try {
+    await window.firebaseSaveCSV(csvText);
+    setSyncStatus('ok', '☁ Synced · just now');
+  } catch (err) {
+    console.error('Firebase save failed', err);
+    setSyncStatus('error', '☁ Save failed');
+  }
+}
+
+function fmtSyncTime(d) {
+  if (!d) return '';
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+}
+
+async function tryLoadFromCloud() {
+  if (!window.firebaseReady || !window.firebaseLoadCSV) return;
+  setSyncStatus('syncing', '☁ Loading…');
+  try {
+    const data = await window.firebaseLoadCSV();
+    if (data && data.csv) {
+      init(data.csv);
+      document.getElementById('filename').textContent = 'cloud dataset';
+      setSyncStatus('ok', '☁ Synced · ' + fmtSyncTime(data.updatedAt));
+    } else {
+      setSyncStatus('', '☁ No data yet');
+    }
+  } catch (err) {
+    console.error('Firebase load failed', err);
+    setSyncStatus('error', '☁ Load failed');
+  }
+}
+
+// Wait for Firebase module to load, then auto-fetch
+if (window.firebaseReady) {
+  tryLoadFromCloud();
+} else {
+  document.addEventListener('firebase-ready', tryLoadFromCloud, { once: true });
+  // Fallback timeout in case Firebase fails to load
+  setTimeout(() => {
+    if (!window.firebaseReady) setSyncStatus('error', '☁ Offline');
+  }, 8000);
 }
 
 function extractPIN(address) {
