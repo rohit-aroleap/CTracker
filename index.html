@@ -305,6 +305,16 @@
   body.light .share-btn { background: #dcfce7; color: #166534; border-color: #86efac; }
   body.light .share-btn:hover { background: #bbf7d0; }
 
+  /* Copy button inside map popup */
+  .pop-copy-btn {
+    background: #14532d; color: #86efac; border: 1px solid #15803d;
+    border-radius: 4px; padding: 2px 7px; font-size: 12px; cursor: pointer;
+    flex-shrink: 0; line-height: 1;
+  }
+  .pop-copy-btn:hover { background: #166534; color: #bbf7d0; }
+  body.light .pop-copy-btn { background: #dcfce7; color: #166534; border-color: #86efac; }
+  body.light .pop-copy-btn:hover { background: #bbf7d0; }
+
   .upload-btn {
     background: #4f46e5;
     color: #fff;
@@ -952,7 +962,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.009</span>
+  <span class="version-tag">v1.010</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
@@ -1332,6 +1342,14 @@ function buildShareText(row) {
   if (pin)        lines.push(`*PIN:* ${pin}${city ? ` (${city.replace(' – ', ' / ')})` : ''}`);
   if (map)        lines.push(`*Map:* ${map}`);
   return lines.join('\n');
+}
+
+function copyDetailsBySubId(sid) {
+  if (!sid) return;
+  const sidIdx = headers.indexOf('Subscription ID');
+  if (sidIdx < 0) return;
+  const row = allRows.find(r => r[sidIdx] === sid);
+  if (row) copyCustomerDetails(row);
 }
 
 async function copyCustomerDetails(row) {
@@ -2382,6 +2400,8 @@ function renderMap() {
     return !isNaN(t) && t <= timeCutoff;
   });
 
+  const sidIdx = headers.indexOf('Subscription ID');
+
   rowsForMap.forEach(row => {
     const pin = row[pinIdx] || '';
     if (!pin) return;
@@ -2393,6 +2413,7 @@ function renderMap() {
     const name     = row[nameIdx] || '—';
     const phone    = row[phoneIdx] || '';
     const city     = row[cityIdx] || pin;
+    const sid      = sidIdx >= 0 ? (row[sidIdx] || '') : '';
     const dotColor = isActive ? '#22c55e' : status === 'INITIALIZED' ? '#60a5fa' : '#ef4444';
 
     const dotBorder = document.body.classList.contains('light') ? '#ffffff' : '#1a1d27';
@@ -2406,8 +2427,13 @@ function renderMap() {
     });
 
     const statusLabel = status === 'CUSTOMER_CANCELLED' ? 'CUST. CANCELLED' : status;
+    const copyBtn = sid
+      ? `<button class="pop-copy-btn" onclick="copyDetailsBySubId('${sid}')" title="Copy details for WhatsApp">📋</button>`
+      : '';
     const popup = `
-      <div class="pop-city">${name}</div>
+      <div class="pop-city" style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+        <span>${name}</span>${copyBtn}
+      </div>
       <div style="font-size:11px;color:#64748b;margin-bottom:6px">${phone}</div>
       <div style="font-size:11px;font-weight:600;color:${dotColor}">${statusLabel}</div>
       <div style="margin-top:5px;font-size:11px;color:#475569">${city} &middot; ${pin}</div>`;
