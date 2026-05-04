@@ -742,7 +742,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.003</span>
+  <span class="version-tag">v1.004</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
@@ -924,15 +924,106 @@ body.addEventListener('drop', e => {
   if (file) loadFile(file);
 });
 
+let currentCSVText = '';
+
 function loadFile(file) {
   document.getElementById('filename').textContent = file.name;
   const reader = new FileReader();
   reader.onload = async e => {
-    const text = e.target.result;
-    init(text);
-    await saveToCloud(text);
+    const newText = e.target.result;
+    const result = mergeCSV(currentCSVText, newText);
+    currentCSVText = result.merged;
+    init(currentCSVText);
+    notifyMerge(result);
+    await saveToCloud(currentCSVText);
   };
   reader.readAsText(file);
+}
+
+// Append-only merge by Subscription ID. Existing rows are never overwritten.
+function mergeCSV(existingText, newText) {
+  if (!existingText || !existingText.trim()) {
+    return { merged: newText, added: -1, skipped: 0, dupesInBatch: 0 };
+  }
+
+  const existingRows = parseCSV(existingText).filter(r => r.some(c => c));
+  const newRows      = parseCSV(newText).filter(r => r.some(c => c));
+  if (existingRows.length === 0) return { merged: newText, added: -1, skipped: 0, dupesInBatch: 0 };
+  if (newRows.length < 2)        return { merged: existingText, added: 0, skipped: 0, dupesInBatch: 0 };
+
+  const existingHeaders = existingRows[0];
+  const newHeaders      = newRows[0];
+
+  const existingIdIdx = existingHeaders.indexOf('Subscription ID');
+  const newIdIdx      = newHeaders.indexOf('Subscription ID');
+  if (existingIdIdx < 0 || newIdIdx < 0) {
+    alert("Can't merge: 'Subscription ID' column missing. Replacing data instead.");
+    return { merged: newText, added: -1, skipped: 0, dupesInBatch: 0 };
+  }
+
+  const existingIds = new Set(existingRows.slice(1).map(r => r[existingIdIdx]).filter(Boolean));
+  const onlyNew = [];
+  const seenInBatch = new Set();
+  let skipped = 0, dupesInBatch = 0;
+  newRows.slice(1).forEach(r => {
+    const id = r[newIdIdx];
+    if (!id) return;
+    if (existingIds.has(id))     { skipped++; return; }
+    if (seenInBatch.has(id))     { dupesInBatch++; return; }
+    seenInBatch.add(id);
+    onlyNew.push(r);
+  });
+
+  if (onlyNew.length === 0) {
+    return { merged: existingText, added: 0, skipped, dupesInBatch };
+  }
+
+  // Reorder each new row to match the existing CSV's column order
+  const headersDiffer = JSON.stringify(existingHeaders) !== JSON.stringify(newHeaders);
+  const reordered = headersDiffer
+    ? onlyNew.map(row => existingHeaders.map(h => {
+        const i = newHeaders.indexOf(h);
+        return i >= 0 ? (row[i] || '') : '';
+      }))
+    : onlyNew;
+
+  const newLines = reordered.map(serializeRow).join('\n');
+  const merged = existingText.replace(/\n+$/, '') + '\n' + newLines + '\n';
+  return { merged, added: onlyNew.length, skipped, dupesInBatch };
+}
+
+function serializeRow(row) {
+  return row.map(cell => {
+    if (cell == null) return '';
+    const s = String(cell);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',');
+}
+
+function notifyMerge(result) {
+  let msg;
+  if (result.added === -1) {
+    msg = 'Loaded new dataset.';
+  } else if (result.added === 0) {
+    msg = `No new customers found (skipped ${result.skipped} duplicates).`;
+  } else {
+    msg = `Added ${result.added} new customer${result.added === 1 ? '' : 's'}` +
+          (result.skipped ? ` (${result.skipped} already existed)` : '');
+  }
+  showToast(msg);
+}
+
+function showToast(text) {
+  const t = document.createElement('div');
+  t.textContent = text;
+  t.style.cssText = `
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:#1e1b4b; color:#c7d2fe; padding:10px 18px; border-radius:8px;
+    border:1px solid #4f46e5; font-size:13px; z-index:9999;
+    box-shadow:0 4px 16px rgba(0,0,0,.4); animation:toastIn .25s ease-out;`;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 3500);
+  setTimeout(() => t.remove(), 4000);
 }
 
 // ── Firebase sync ─────────────────────────────────────────────────────────────
@@ -969,6 +1060,7 @@ async function tryLoadFromCloud() {
   try {
     const data = await window.firebaseLoadCSV();
     if (data && data.csv) {
+      currentCSVText = data.csv;
       init(data.csv);
       document.getElementById('filename').textContent = 'cloud dataset';
       setSyncStatus('ok', '☁ Synced · ' + fmtSyncTime(data.updatedAt));
