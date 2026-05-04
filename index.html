@@ -13,6 +13,9 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+  import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+           signOut, setPersistence, browserLocalPersistence }
+    from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAXw4AB59Km4N92Y67ODaiOJBmvNxmJdtw",
@@ -27,6 +30,8 @@
 
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
+  const auth = getAuth(app);
+  await setPersistence(auth, browserLocalPersistence);
   const docRef = doc(db, "ctracker", "current");
 
   window.firebaseSaveCSV = async (csvText) => {
@@ -38,6 +43,10 @@
     const data = snap.data();
     return { csv: data.csv, updatedAt: data.updatedAt?.toDate?.() ?? null };
   };
+  window.firebaseSignIn = (email, password) =>
+    signInWithEmailAndPassword(auth, email, password);
+  window.firebaseSignOut = () => signOut(auth);
+  window.firebaseOnAuth = (cb) => onAuthStateChanged(auth, cb);
   window.firebaseReady = true;
   document.dispatchEvent(new Event('firebase-ready'));
 </script>
@@ -94,6 +103,103 @@
   body.light .sync-status.ok      { color: #166534; background: #dcfce7; border-color: #86efac; }
   body.light .sync-status.syncing { color: #92400e; background: #fef3c7; border-color: #fde68a; }
   body.light .sync-status.error   { color: #991b1b; background: #fee2e2; border-color: #fca5a5; }
+
+  /* Login screen */
+  .login-screen {
+    position: fixed;
+    inset: 0;
+    background: #0f1117;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+  }
+  body.light .login-screen { background: #f1f5f9; }
+  .login-card {
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 12px;
+    padding: 32px;
+    width: 360px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  }
+  body.light .login-card { background: #fff; border-color: #e2e8f0; box-shadow: 0 8px 32px rgba(15,23,42,.1); }
+  .login-card h2 {
+    font-size: 20px;
+    color: #fff;
+    margin-bottom: 4px;
+    font-weight: 700;
+  }
+  body.light .login-card h2 { color: #0f172a; }
+  .login-sub {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 24px;
+  }
+  .login-card label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: #94a3b8;
+    margin: 14px 0 6px;
+  }
+  .login-card input {
+    width: 100%;
+    background: #12151f;
+    border: 1px solid #2d3148;
+    border-radius: 6px;
+    padding: 9px 12px;
+    color: #e2e8f0;
+    font-size: 14px;
+    outline: none;
+  }
+  .login-card input:focus { border-color: #4f46e5; }
+  body.light .login-card input { background: #f8fafc; border-color: #e2e8f0; color: #1e293b; }
+  .login-submit {
+    width: 100%;
+    background: #4f46e5;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 22px;
+  }
+  .login-submit:hover { background: #4338ca; }
+  .login-submit:disabled { opacity: .5; cursor: not-allowed; }
+  .login-error {
+    color: #fca5a5;
+    font-size: 12px;
+    margin-top: 12px;
+    min-height: 16px;
+  }
+  body.light .login-error { color: #b91c1c; }
+
+  .user-badge {
+    font-size: 11px;
+    color: #94a3b8;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .user-badge .email { font-family: monospace; }
+  .signout-btn {
+    background: transparent;
+    border: 1px solid #2d3148;
+    border-radius: 4px;
+    padding: 3px 8px;
+    color: #94a3b8;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .signout-btn:hover { border-color: #ef4444; color: #fca5a5; }
+  body.light .user-badge { color: #64748b; }
+  body.light .signout-btn { border-color: #e2e8f0; color: #64748b; }
+  body.light .signout-btn:hover { border-color: #ef4444; color: #b91c1c; }
 
   .upload-btn {
     background: #4f46e5;
@@ -742,7 +848,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.004</span>
+  <span class="version-tag">v1.005</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
@@ -757,6 +863,25 @@
     <input type="text" id="searchInput" placeholder="Search name, phone, address…" oninput="applyFilters()">
   </div>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark">🌙</button>
+  <div class="user-badge" id="userBadge" style="display:none">
+    <span class="email" id="userEmail">—</span>
+    <button class="signout-btn" onclick="handleSignOut()">Sign out</button>
+  </div>
+</div>
+
+<div class="login-screen" id="loginScreen" style="display:none">
+  <div class="login-card">
+    <h2>CTracker</h2>
+    <div class="login-sub">Sign in to access subscription data</div>
+    <form onsubmit="handleLogin(event)">
+      <label for="loginEmail">Email</label>
+      <input type="email" id="loginEmail" required autocomplete="email" autofocus>
+      <label for="loginPassword">Password</label>
+      <input type="password" id="loginPassword" required autocomplete="current-password">
+      <button type="submit" class="login-submit" id="loginSubmit">Sign in</button>
+      <div class="login-error" id="loginError"></div>
+    </form>
+  </div>
 </div>
 
 <div class="drop-zone" id="dropZone">
@@ -1073,14 +1198,81 @@ async function tryLoadFromCloud() {
   }
 }
 
-// Wait for Firebase module to load, then auto-fetch
-if (window.firebaseReady) {
+// ── Auth ──────────────────────────────────────────────────────────────────────
+let currentUser = null;
+
+function handleLogin(ev) {
+  ev.preventDefault();
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const btn = document.getElementById('loginSubmit');
+  const err = document.getElementById('loginError');
+  err.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  window.firebaseSignIn(email, password)
+    .catch(e => {
+      const msg = e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found'
+        ? 'Invalid email or password.'
+        : (e.message || 'Sign-in failed.');
+      err.textContent = msg;
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+    });
+}
+
+function handleSignOut() {
+  window.firebaseSignOut();
+}
+
+function showLoginScreen() {
+  document.getElementById('loginScreen').style.display = '';
+  document.getElementById('userBadge').style.display = 'none';
+}
+
+function showApp(user) {
+  document.getElementById('loginScreen').style.display = 'none';
+  const badge = document.getElementById('userBadge');
+  badge.style.display = '';
+  document.getElementById('userEmail').textContent = user.email;
+  document.getElementById('loginPassword').value = '';
+  document.getElementById('loginError').textContent = '';
   tryLoadFromCloud();
+}
+
+function startAuthListener() {
+  if (!window.firebaseOnAuth) return;
+  window.firebaseOnAuth(user => {
+    currentUser = user;
+    if (user) {
+      showApp(user);
+    } else {
+      // Reset app state on sign-out
+      currentCSVText = '';
+      allRows = []; headers = [];
+      document.getElementById('mainContent').style.display = 'none';
+      document.getElementById('tabBar').style.display = 'none';
+      document.getElementById('mapView').classList.remove('visible');
+      document.getElementById('dropZone').style.display = '';
+      document.getElementById('filename').textContent = 'No file loaded';
+      setSyncStatus('', '☁ Signed out');
+      showLoginScreen();
+    }
+  });
+}
+
+if (window.firebaseReady) {
+  startAuthListener();
 } else {
-  document.addEventListener('firebase-ready', tryLoadFromCloud, { once: true });
-  // Fallback timeout in case Firebase fails to load
+  document.addEventListener('firebase-ready', startAuthListener, { once: true });
   setTimeout(() => {
-    if (!window.firebaseReady) setSyncStatus('error', '☁ Offline');
+    if (!window.firebaseReady) {
+      setSyncStatus('error', '☁ Offline');
+      // Show login screen anyway so the page isn't blank
+      showLoginScreen();
+    }
   }, 8000);
 }
 
