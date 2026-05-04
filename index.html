@@ -35,13 +35,20 @@
   const docRef = doc(db, "ctracker", "current");
 
   window.firebaseSaveCSV = async (csvText) => {
-    await setDoc(docRef, { csv: csvText, updatedAt: serverTimestamp() });
+    await setDoc(docRef, { csv: csvText, updatedAt: serverTimestamp() }, { merge: true });
+  };
+  window.firebaseSaveSensors = async (ids) => {
+    await setDoc(docRef, { withSensorIds: ids, updatedAt: serverTimestamp() }, { merge: true });
   };
   window.firebaseLoadCSV = async () => {
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
     const data = snap.data();
-    return { csv: data.csv, updatedAt: data.updatedAt?.toDate?.() ?? null };
+    return {
+      csv: data.csv,
+      withSensorIds: data.withSensorIds || [],
+      updatedAt: data.updatedAt?.toDate?.() ?? null
+    };
   };
   window.firebaseSignIn = (email, password) =>
     signInWithEmailAndPassword(auth, email, password);
@@ -200,6 +207,28 @@
   body.light .user-badge { color: #64748b; }
   body.light .signout-btn { border-color: #e2e8f0; color: #64748b; }
   body.light .signout-btn:hover { border-color: #ef4444; color: #b91c1c; }
+
+  /* Sensor toggle */
+  .sensor-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    border: 1px solid;
+    transition: all .15s;
+  }
+  .sensor-badge.off { background: #1e293b; color: #94a3b8; border-color: #334155; }
+  .sensor-badge.off:hover { border-color: #94a3b8; color: #cbd5e1; }
+  .sensor-badge.on  { background: #14532d; color: #86efac; border-color: #15803d; }
+  .sensor-badge.on:hover { border-color: #86efac; background: #166534; }
+  body.light .sensor-badge.off { background: #f1f5f9; color: #64748b; border-color: #cbd5e1; }
+  body.light .sensor-badge.off:hover { border-color: #94a3b8; color: #475569; }
+  body.light .sensor-badge.on  { background: #dcfce7; color: #166534; border-color: #86efac; }
+  body.light .sensor-badge.on:hover { background: #bbf7d0; }
 
   .upload-btn {
     background: #4f46e5;
@@ -848,7 +877,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.005</span>
+  <span class="version-tag">v1.006</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
@@ -970,6 +999,9 @@
   <div class="filters" id="sourceFilters">
     <span class="filter-label">Source:</span>
   </div>
+  <div class="filters" id="sensorFilters">
+    <span class="filter-label">Sensor:</span>
+  </div>
 
   <div class="col-toggles" id="colToggles">
     <span class="col-toggle-label">Columns:</span>
@@ -1015,6 +1047,7 @@ let allRows = [], headers = [], activeFilters = {}, sortCol = -1, sortDir = 1;
 let visibleCols = new Set();
 let currentTab = 'table', leafletMap = null;
 let clusterRadius = parseInt(localStorage.getItem('ferraClusterRadius') ?? '60', 10);
+let withSensorIds = new Set();
 let timeMin = null, timeMax = null, timeCutoff = null;
 let timePlaying = false, timePlaySpeed = 1, timePlayRAF = null;
 
@@ -1030,7 +1063,7 @@ const HIDDEN_COLS_DEFAULT = new Set([
 // Columns that should not wrap
 const NOWRAP_COLS = new Set([
   'Status','Plan Tier','Source','Start Date','End Date','Retention (months)',
-  'Last Payment Status','Last Payment Date','Comments Count','PIN Code','City'
+  'Last Payment Status','Last Payment Date','Comments Count','PIN Code','City','Sensor'
 ]);
 
 // ── Load file ────────────────────────────────────────────────────────────────
@@ -1186,6 +1219,7 @@ async function tryLoadFromCloud() {
     const data = await window.firebaseLoadCSV();
     if (data && data.csv) {
       currentCSVText = data.csv;
+      withSensorIds = new Set(data.withSensorIds || []);
       init(data.csv);
       document.getElementById('filename').textContent = 'cloud dataset';
       setSyncStatus('ok', '☁ Synced · ' + fmtSyncTime(data.updatedAt));
@@ -1195,6 +1229,35 @@ async function tryLoadFromCloud() {
   } catch (err) {
     console.error('Firebase load failed', err);
     setSyncStatus('error', '☁ Load failed');
+  }
+}
+
+async function toggleSensor(subId) {
+  if (!subId) return;
+  if (withSensorIds.has(subId)) withSensorIds.delete(subId);
+  else                          withSensorIds.add(subId);
+
+  const sensorIdx = headers.indexOf('Sensor');
+  const sidIdx    = headers.indexOf('Subscription ID');
+  if (sensorIdx >= 0 && sidIdx >= 0) {
+    allRows.forEach(row => {
+      if (row[sidIdx] === subId) {
+        row[sensorIdx] = withSensorIds.has(subId) ? 'With Sensor' : 'Without Sensor';
+      }
+    });
+  }
+
+  applyFilters();
+  buildStats();
+
+  if (!window.firebaseSaveSensors) return;
+  setSyncStatus('syncing', '☁ Saving sensor…');
+  try {
+    await window.firebaseSaveSensors([...withSensorIds]);
+    setSyncStatus('ok', '☁ Synced · just now');
+  } catch (err) {
+    console.error('Sensor save failed', err);
+    setSyncStatus('error', '☁ Save failed');
   }
 }
 
@@ -1434,17 +1497,19 @@ const PIN_COORDS = {
 function init(text) {
   const rows = parseCSV(text);
   if (rows.length < 2) { alert('Could not parse CSV.'); return; }
-  headers = rows[0];
-  allRows = rows.slice(1).filter(r => r.some(c => c));
+  const origHeaders = rows[0];
+  const subIdIdx   = origHeaders.indexOf('Subscription ID');
+  const addrIdx    = origHeaders.indexOf('Customer Address');
+  const insertAt   = addrIdx >= 0 ? addrIdx + 1 : origHeaders.length;
 
-  // Inject synthetic PIN Code + City columns right after Customer Address
-  const addrIdx = headers.indexOf('Customer Address');
-  const insertAt = addrIdx >= 0 ? addrIdx + 1 : headers.length;
-  headers = [...headers.slice(0, insertAt), 'PIN Code', 'City', ...headers.slice(insertAt)];
-  allRows = allRows.map(row => {
+  // Inject synthetic PIN Code + City + Sensor columns right after Customer Address
+  headers = [...origHeaders.slice(0, insertAt), 'PIN Code', 'City', 'Sensor', ...origHeaders.slice(insertAt)];
+  allRows = rows.slice(1).filter(r => r.some(c => c)).map(row => {
     const addr = addrIdx >= 0 ? (row[addrIdx] || '') : '';
-    const pin = extractPIN(addr);
-    return [...row.slice(0, insertAt), pin, pinToCity(pin), ...row.slice(insertAt)];
+    const pin  = extractPIN(addr);
+    const sid  = subIdIdx >= 0 ? (row[subIdIdx] || '') : '';
+    const sensor = withSensorIds.has(sid) ? 'With Sensor' : 'Without Sensor';
+    return [...row.slice(0, insertAt), pin, pinToCity(pin), sensor, ...row.slice(insertAt)];
   });
 
   visibleCols = new Set(headers.filter(h => !HIDDEN_COLS_DEFAULT.has(h)));
@@ -1473,6 +1538,8 @@ function buildStats() {
   const retentions = allRows.map(r => parseFloat(cellVal(r,'Retention (months)'))).filter(n => !isNaN(n));
   const avgRet = retentions.length ? (retentions.reduce((a,b)=>a+b,0)/retentions.length).toFixed(1) : '—';
 
+  const withSensor = allRows.filter(r => cellVal(r,'Sensor') === 'With Sensor').length;
+
   const html = [
     stat('Total', total),
     stat('Active', active, `${((active/total)*100).toFixed(0)}% of total`),
@@ -1481,6 +1548,7 @@ function buildStats() {
     stat('Individual', ind, 'plan tier'),
     stat('Duo', duo, 'plan tier'),
     stat('Family', family, 'plan tier'),
+    stat('With Sensor', withSensor, `${total ? ((withSensor/total)*100).toFixed(0) : 0}% of total`),
     stat('Avg Retention', avgRet, 'months'),
   ].join('');
 
@@ -1496,6 +1564,7 @@ function buildStaticFilters() {
   buildFilterGroup('statusFilters', 'Status', 'Status');
   buildFilterGroup('tierFilters', 'Plan Tier', 'Plan Tier');
   buildFilterGroup('sourceFilters', 'Source', 'Source');
+  buildFilterGroup('sensorFilters', 'Sensor', 'Sensor');
 }
 
 function buildFilterGroup(elId, colName, groupKey) {
@@ -1620,11 +1689,23 @@ function renderTable(rows) {
 
   rows.forEach(row => {
     const tr = document.createElement('tr');
+    const sidIdx = headers.indexOf('Subscription ID');
     cols.forEach(h => {
       const td = document.createElement('td');
       if (NOWRAP_COLS.has(h)) td.classList.add('nowrap');
       const val = row[headers.indexOf(h)] || '';
-      td.innerHTML = formatCell(h, val);
+      if (h === 'Sensor') {
+        const sid = sidIdx >= 0 ? row[sidIdx] : '';
+        const isOn = val === 'With Sensor';
+        const span = document.createElement('span');
+        span.className = 'sensor-badge ' + (isOn ? 'on' : 'off');
+        span.textContent = isOn ? '🟢 With Sensor' : '⚪ Without Sensor';
+        span.title = 'Click to toggle';
+        if (sid) span.onclick = () => toggleSensor(sid);
+        td.appendChild(span);
+      } else {
+        td.innerHTML = formatCell(h, val);
+      }
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
