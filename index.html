@@ -962,7 +962,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.010</span>
+  <span class="version-tag">v1.011</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
@@ -974,7 +974,7 @@
   </div>
   <div class="search-wrap" id="searchWrap">
     <span class="icon">🔍</span>
-    <input type="text" id="searchInput" placeholder="Search name, phone, address…" oninput="applyFilters()">
+    <input type="text" id="searchInput" placeholder="Search name, phone, address…" oninput="onSearchInput()">
   </div>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark">🌙</button>
   <div class="user-badge" id="userBadge" style="display:none">
@@ -2325,13 +2325,29 @@ function resetCinema() {
   updatePlayBtn();
 }
 
+// ── Shared search ─────────────────────────────────────────────────────────────
+let searchDebounce = null;
+function onSearchInput() {
+  if (currentTab === 'map') {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      if (currentTab === 'map') renderMap();
+    }, 180);
+  } else {
+    applyFilters();
+  }
+}
+
 // ── Tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
   currentTab = tab;
   document.getElementById('tabTable').classList.toggle('active', tab === 'table');
   document.getElementById('tabMap').classList.toggle('active', tab === 'map');
   document.getElementById('mainContent').style.display = tab === 'table' ? '' : 'none';
-  document.getElementById('searchWrap').style.display = tab === 'table' ? '' : 'none';
+  document.getElementById('searchWrap').style.display = '';
+  document.getElementById('searchInput').placeholder = tab === 'map'
+    ? 'Search to filter map…'
+    : 'Search name, phone, address…';
   const mapView = document.getElementById('mapView');
   if (tab === 'map') {
     mapView.classList.add('visible');
@@ -2392,12 +2408,22 @@ function renderMap() {
   });
 
   const startIdx = headers.indexOf('Start Date');
+  const searchVal = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+  const searchCols = ['Customer Name','Customer Phone','Customer Address','PIN Code','City'];
+  const searchIdxs = searchCols.map(c => headers.indexOf(c)).filter(i => i >= 0);
+
   const rowsForMap = allRows.filter(row => {
-    if (timeCutoff == null) return true;
-    const sd = row[startIdx];
-    if (!sd) return false;
-    const t = Date.parse(sd);
-    return !isNaN(t) && t <= timeCutoff;
+    if (timeCutoff != null) {
+      const sd = row[startIdx];
+      if (!sd) return false;
+      const t = Date.parse(sd);
+      if (isNaN(t) || t > timeCutoff) return false;
+    }
+    if (searchVal) {
+      const hit = searchIdxs.some(i => (row[i] || '').toLowerCase().includes(searchVal));
+      if (!hit) return false;
+    }
+    return true;
   });
 
   const sidIdx = headers.indexOf('Subscription ID');
