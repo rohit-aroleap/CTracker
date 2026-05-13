@@ -46,6 +46,7 @@
 <div class="card">
   <h2><span class="step-num">2</span>Read source data</h2>
   <button id="readBtn" onclick="readSource()" disabled>Read ctracker/current</button>
+  <button id="downloadBtn" onclick="downloadBackup()" disabled style="margin-left:8px;background:#15803d">💾 Download JSON backup</button>
   <pre id="srcDump">—</pre>
 </div>
 
@@ -127,7 +128,22 @@ window.readSource = async () => {
     };
     dump.textContent = JSON.stringify(preview, null, 2);
     document.getElementById('writeBtn').disabled = !dstAuth.currentUser;
+    document.getElementById('downloadBtn').disabled = false;
   } catch (e) { dump.textContent = '✗ ' + (e.message || e.code); }
+};
+
+window.downloadBackup = () => {
+  if (!srcData) { alert('Read source first.'); return; }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const blob = new Blob([JSON.stringify(srcData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ctracker-backup-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 };
 
 window.signInDest = async () => {
