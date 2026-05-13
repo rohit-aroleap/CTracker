@@ -11,7 +11,7 @@
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-  import { getDatabase, ref, get, update, serverTimestamp }
+  import { getDatabase, ref, get, update, onValue, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
   import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
            signOut, setPersistence, browserLocalPersistence }
@@ -56,6 +56,12 @@
       mapLinks: data.mapLinks || {},
       updatedAt: data.updatedAt ? new Date(data.updatedAt) : null
     };
+  };
+  // Live listener on the shared ferra-sync output written by the
+  // cron worker (ferra-sync.rohitpatel-mailid297.workers.dev).
+  // Read-only consumer — CTracker never writes to this path.
+  window.firebaseListenSharedSubs = (cb) => {
+    onValue(ref(db, 'ferraSubscriptions/v1'), snap => cb(snap.val()));
   };
   window.firebaseSignIn = (email, password) =>
     signInWithEmailAndPassword(auth, email, password);
@@ -303,6 +309,47 @@
   .share-btn:active { transform: translateY(1px); }
   body.light .share-btn { background: #dcfce7; color: #166534; border-color: #86efac; }
   body.light .share-btn:hover { background: #bbf7d0; }
+
+  /* Step (Ferra subscription tag) badge */
+  .step-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    border: 1px solid;
+  }
+  .step-badge.empty {
+    background: transparent; color: #475569; border-color: #334155;
+    border-style: dashed; font-weight: 400;
+  }
+  body.light .step-badge.empty { color: #cbd5e1; border-color: #cbd5e1; }
+
+  /* Ferra sync controls in topbar */
+  .ferra-sync {
+    display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0;
+  }
+  .ferra-sync-label {
+    font-size: 11px; color: #64748b;
+    font-family: monospace; white-space: nowrap;
+  }
+  body.light .ferra-sync-label { color: #94a3b8; }
+  .ferra-refresh-btn {
+    background: #1e2235; color: #c7d2fe;
+    border: 1px solid #2d3148; border-radius: 6px;
+    padding: 4px 10px; font-size: 11px;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 4px;
+    flex-shrink: 0;
+  }
+  .ferra-refresh-btn:hover { background: #312e81; border-color: #4f46e5; }
+  .ferra-refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+  body.light .ferra-refresh-btn {
+    background: #ffffff; color: #4338ca; border-color: #c7d2fe;
+  }
+  body.light .ferra-refresh-btn:hover { background: #eef2ff; border-color: #4f46e5; }
 
   /* Copy button inside map popup */
   .pop-copy-btn {
@@ -961,12 +1008,16 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.013</span>
+  <span class="version-tag">v1.014</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">
   <span class="filename" id="filename">No file loaded</span>
   <span class="sync-status" id="syncStatus">☁ Connecting…</span>
+  <div class="ferra-sync">
+    <span class="ferra-sync-label" id="ferraSyncLabel" title="Last cron sync of shared Ferra subscription tags">Ferra: —</span>
+    <button class="ferra-refresh-btn" id="ferraRefreshBtn" onclick="handleFerraWorkerRefresh(this)" title="Force a Ferra sync via the worker (cron also runs every 30 min)">↻ Refresh</button>
+  </div>
   <div class="tabs" id="tabBar" style="display:none">
     <button class="tab-btn active" id="tabTable" onclick="switchTab('table')">Table</button>
     <button class="tab-btn" id="tabMap" onclick="switchTab('map')">Map</button>
@@ -1086,6 +1137,9 @@
   <div class="filters" id="sensorFilters">
     <span class="filter-label">Sensor:</span>
   </div>
+  <div class="filters" id="stepFilters">
+    <span class="filter-label">Step:</span>
+  </div>
 
   <div class="col-toggles" id="colToggles">
     <span class="col-toggle-label">Columns:</span>
@@ -1134,6 +1188,50 @@ let clusterRadius = parseInt(localStorage.getItem('ferraClusterRadius') ?? '60',
 let withSensorIds = new Set();
 let manualPins = new Map(); // Subscription ID -> manually entered PIN
 let mapLinks   = new Map(); // Subscription ID -> Google Maps URL
+
+// ── Shared Ferra subscription tags (ferra-sync worker → /ferraSubscriptions/v1)
+// CTracker is a read-only consumer of this path. The worker
+// (https://ferra-sync.rohitpatel-mailid297.workers.dev/) refreshes it
+// every 30 min and on demand via POST.
+let sharedSubsByPhone  = {};   // normalized phone -> step tag
+let sharedSubsMeta     = null; // { uploadedAt, totalRows, matched, ... }
+const FERRA_SYNC_WORKER = 'https://ferra-sync.rohitpatel-mailid297.workers.dev/';
+
+// Step tag colours (each Ferra subscription step gets a category colour)
+const STEP_COLORS = {
+  'Order Pending'           : { fg:'#fde68a', bg:'#78350f', bd:'#92400e' },
+  'Auto Pay Pending'        : { fg:'#fde68a', bg:'#78350f', bd:'#92400e' },
+  'Approval Pending'        : { fg:'#fde68a', bg:'#78350f', bd:'#92400e' },
+  'Machine Assign Pending'  : { fg:'#fde68a', bg:'#78350f', bd:'#92400e' },
+  'Installation Pending'    : { fg:'#bfdbfe', bg:'#1e3a8a', bd:'#1d4ed8' },
+  'Persona Call Pending'    : { fg:'#bfdbfe', bg:'#1e3a8a', bd:'#1d4ed8' },
+  'Exercises Call Pending'  : { fg:'#bfdbfe', bg:'#1e3a8a', bd:'#1d4ed8' },
+  'Hand Off Pending'        : { fg:'#bfdbfe', bg:'#1e3a8a', bd:'#1d4ed8' },
+  'SA Reach Out Pending'    : { fg:'#ddd6fe', bg:'#4c1d95', bd:'#6d28d9' },
+  'SA Follow Up'            : { fg:'#ddd6fe', bg:'#4c1d95', bd:'#6d28d9' },
+  'All Steps Complete'      : { fg:'#86efac', bg:'#14532d', bd:'#15803d' },
+  'All Done'                : { fg:'#86efac', bg:'#14532d', bd:'#15803d' },
+  'Uninstallation Pending'  : { fg:'#fca5a5', bg:'#3f1515', bd:'#7f1d1d' },
+  'Pickup Pending'          : { fg:'#fca5a5', bg:'#3f1515', bd:'#7f1d1d' },
+  'Received in Warehouse'   : { fg:'#cbd5e1', bg:'#1e293b', bd:'#334155' },
+};
+const STEP_COLORS_LIGHT = {
+  'Order Pending'           : { fg:'#92400e', bg:'#fef3c7', bd:'#fde68a' },
+  'Auto Pay Pending'        : { fg:'#92400e', bg:'#fef3c7', bd:'#fde68a' },
+  'Approval Pending'        : { fg:'#92400e', bg:'#fef3c7', bd:'#fde68a' },
+  'Machine Assign Pending'  : { fg:'#92400e', bg:'#fef3c7', bd:'#fde68a' },
+  'Installation Pending'    : { fg:'#1e40af', bg:'#dbeafe', bd:'#93c5fd' },
+  'Persona Call Pending'    : { fg:'#1e40af', bg:'#dbeafe', bd:'#93c5fd' },
+  'Exercises Call Pending'  : { fg:'#1e40af', bg:'#dbeafe', bd:'#93c5fd' },
+  'Hand Off Pending'        : { fg:'#1e40af', bg:'#dbeafe', bd:'#93c5fd' },
+  'SA Reach Out Pending'    : { fg:'#5b21b6', bg:'#ede9fe', bd:'#c4b5fd' },
+  'SA Follow Up'            : { fg:'#5b21b6', bg:'#ede9fe', bd:'#c4b5fd' },
+  'All Steps Complete'      : { fg:'#166534', bg:'#dcfce7', bd:'#86efac' },
+  'All Done'                : { fg:'#166534', bg:'#dcfce7', bd:'#86efac' },
+  'Uninstallation Pending'  : { fg:'#991b1b', bg:'#fee2e2', bd:'#fca5a5' },
+  'Pickup Pending'          : { fg:'#991b1b', bg:'#fee2e2', bd:'#fca5a5' },
+  'Received in Warehouse'   : { fg:'#475569', bg:'#f1f5f9', bd:'#cbd5e1' },
+};
 let timeMin = null, timeMax = null, timeCutoff = null;
 let timePlaying = false, timePlaySpeed = 1, timePlayRAF = null;
 
@@ -1149,7 +1247,7 @@ const HIDDEN_COLS_DEFAULT = new Set([
 // Columns that should not wrap
 const NOWRAP_COLS = new Set([
   'Status','Plan Tier','Source','Start Date','End Date','Retention (months)',
-  'Last Payment Status','Last Payment Date','Comments Count','PIN Code','City','Sensor','Map Link','Share'
+  'Last Payment Status','Last Payment Date','Comments Count','PIN Code','City','Sensor','Map Link','Share','Step'
 ]);
 
 // ── Load file ────────────────────────────────────────────────────────────────
@@ -1371,6 +1469,108 @@ async function copyCustomerDetails(row) {
   }
 }
 
+// ── Shared Ferra subscription tags (ferra-sync worker) ───────────────────────
+// Matches the phone normalization in the worker (see worker-ferra-sync.js).
+function normalizePhone(p) {
+  let n = String(p || '').replace(/\D/g, '');
+  if (n.startsWith('0')) n = n.replace(/^0+/, '');
+  if (n.length === 10) n = '91' + n;
+  return n;
+}
+
+function lookupStepForPhone(phone) {
+  if (!phone) return '';
+  const key = normalizePhone(phone);
+  return sharedSubsByPhone[key] || '';
+}
+
+function renderStepBadge(val) {
+  const span = document.createElement('span');
+  span.className = 'step-badge';
+  if (!val) {
+    span.classList.add('empty');
+    span.textContent = '—';
+    span.title = 'No matching tag in shared Ferra feed';
+    return span;
+  }
+  const isLight = document.body.classList.contains('light');
+  const palette = (isLight ? STEP_COLORS_LIGHT : STEP_COLORS)[val];
+  if (palette) {
+    span.style.color = palette.fg;
+    span.style.background = palette.bg;
+    span.style.borderColor = palette.bd;
+  }
+  span.textContent = val;
+  return span;
+}
+
+// Re-derive the 'Step' cell for every row from the latest sharedSubsByPhone.
+// Called when /ferraSubscriptions/v1 fires onValue (initial snapshot + every
+// subsequent worker write).
+function updateAllStepsFromSharedSubs() {
+  if (!allRows.length) return;
+  const stepIdx  = headers.indexOf('Step');
+  const phoneIdx = headers.indexOf('Customer Phone');
+  if (stepIdx < 0 || phoneIdx < 0) return;
+  for (const row of allRows) {
+    row[stepIdx] = lookupStepForPhone(row[phoneIdx]);
+  }
+  if (typeof applyFilters === 'function') applyFilters();
+  if (typeof buildStats   === 'function') buildStats();
+}
+
+function updateFerraSyncLabel() {
+  const el = document.getElementById('ferraSyncLabel');
+  if (!el) return;
+  if (!sharedSubsMeta || !sharedSubsMeta.uploadedAt) {
+    el.textContent = 'Ferra: waiting…';
+    return;
+  }
+  const matched = sharedSubsMeta.matched ?? sharedSubsMeta.totalRows ?? 0;
+  el.textContent = `Ferra: ${matched} · ${formatIstTime(sharedSubsMeta.uploadedAt)}`;
+}
+
+function formatIstTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  const Y = ist.getUTCFullYear();
+  const M = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const D = String(ist.getUTCDate()).padStart(2, '0');
+  const h = String(ist.getUTCHours()).padStart(2, '0');
+  const m = String(ist.getUTCMinutes()).padStart(2, '0');
+  return `${Y}-${M}-${D} ${h}:${m} IST`;
+}
+
+function startSharedSubsListener() {
+  if (!window.firebaseListenSharedSubs) return;
+  window.firebaseListenSharedSubs(data => {
+    sharedSubsMeta    = data || null;
+    sharedSubsByPhone = (data && data.byPhone) ? data.byPhone : {};
+    updateFerraSyncLabel();
+    updateAllStepsFromSharedSubs();
+  });
+}
+
+async function handleFerraWorkerRefresh(btnEl) {
+  const originalLabel = btnEl ? btnEl.textContent : '';
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ Refreshing…'; }
+  try {
+    const resp = await fetch(FERRA_SYNC_WORKER + '?only=subs', { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok && data.ok) {
+      showToast(`Ferra refresh queued — ${data.results?.[0]?.matched || 0} subs`);
+    } else {
+      showToast('Refresh failed — ' + (data.error || `HTTP ${resp.status}`));
+    }
+  } catch (e) {
+    showToast('Refresh failed — ' + (e.message || String(e)));
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = originalLabel; }
+  }
+}
+
 async function editMapLink(subId) {
   if (!subId) return;
   const current = mapLinks.get(subId) || '';
@@ -1541,6 +1741,7 @@ function showLoginScreen() {
   document.getElementById('userBadge').style.display = 'none';
 }
 
+let sharedSubsListenerStarted = false;
 function showApp(user) {
   document.getElementById('loginScreen').style.display = 'none';
   const badge = document.getElementById('userBadge');
@@ -1549,6 +1750,12 @@ function showApp(user) {
   document.getElementById('loginPassword').value = '';
   document.getElementById('loginError').textContent = '';
   tryLoadFromCloud();
+  // Start the live listener on /ferraSubscriptions/v1 once per session.
+  // onValue keeps Step values in sync with the worker's cron writes.
+  if (!sharedSubsListenerStarted) {
+    sharedSubsListenerStarted = true;
+    startSharedSubsListener();
+  }
 }
 
 function startAuthListener() {
@@ -1748,15 +1955,19 @@ function init(text) {
   const addrIdx    = origHeaders.indexOf('Customer Address');
   const insertAt   = addrIdx >= 0 ? addrIdx + 1 : origHeaders.length;
 
-  // Inject synthetic columns: 'Share' at position 0, plus PIN/City/Sensor/Map Link after Customer Address
-  headers = ['Share', ...origHeaders.slice(0, insertAt), 'PIN Code', 'City', 'Sensor', 'Map Link', ...origHeaders.slice(insertAt)];
+  // Inject synthetic columns: 'Share' at position 0, plus PIN/City/Sensor/Map Link/Step after Customer Address.
+  // Step is joined live from /ferraSubscriptions/v1 (shared ferra-sync feed) — see updateAllStepsFromSharedSubs.
+  headers = ['Share', ...origHeaders.slice(0, insertAt), 'PIN Code', 'City', 'Sensor', 'Map Link', 'Step', ...origHeaders.slice(insertAt)];
+  const phoneIdx = origHeaders.indexOf('Customer Phone');
   allRows = rows.slice(1).filter(r => r.some(c => c)).map(row => {
-    const addr = addrIdx >= 0 ? (row[addrIdx] || '') : '';
-    const sid  = subIdIdx >= 0 ? (row[subIdIdx] || '') : '';
-    const pin  = manualPins.get(sid) || extractPIN(addr);
+    const addr  = addrIdx  >= 0 ? (row[addrIdx]  || '') : '';
+    const sid   = subIdIdx >= 0 ? (row[subIdIdx] || '') : '';
+    const phone = phoneIdx >= 0 ? (row[phoneIdx] || '') : '';
+    const pin    = manualPins.get(sid) || extractPIN(addr);
     const sensor = withSensorIds.has(sid) ? 'With Sensor' : 'Without Sensor';
-    const link  = mapLinks.get(sid) || '';
-    return ['', ...row.slice(0, insertAt), pin, pinToCity(pin), sensor, link, ...row.slice(insertAt)];
+    const link   = mapLinks.get(sid) || '';
+    const step   = lookupStepForPhone(phone);
+    return ['', ...row.slice(0, insertAt), pin, pinToCity(pin), sensor, link, step, ...row.slice(insertAt)];
   });
 
   visibleCols = new Set(headers.filter(h => !HIDDEN_COLS_DEFAULT.has(h)));
@@ -1786,6 +1997,10 @@ function buildStats() {
   const avgRet = retentions.length ? (retentions.reduce((a,b)=>a+b,0)/retentions.length).toFixed(1) : '—';
 
   const withSensor = allRows.filter(r => cellVal(r,'Sensor') === 'With Sensor').length;
+  const withStep   = allRows.filter(r => cellVal(r,'Step')).length;
+  const stepSub    = sharedSubsMeta
+    ? `${withStep}/${total} matched`
+    : 'shared feed loading…';
 
   const html = [
     stat('Total', total),
@@ -1796,6 +2011,7 @@ function buildStats() {
     stat('Duo', duo, 'plan tier'),
     stat('Family', family, 'plan tier'),
     stat('With Sensor', withSensor, `${total ? ((withSensor/total)*100).toFixed(0) : 0}% of total`),
+    stat('Step tagged', withStep, stepSub),
     stat('Avg Retention', avgRet, 'months'),
   ].join('');
 
@@ -1812,6 +2028,7 @@ function buildStaticFilters() {
   buildFilterGroup('tierFilters', 'Plan Tier', 'Plan Tier');
   buildFilterGroup('sourceFilters', 'Source', 'Source');
   buildFilterGroup('sensorFilters', 'Sensor', 'Sensor');
+  buildFilterGroup('stepFilters',   'Step',   'Step');
 }
 
 function buildFilterGroup(elId, colName, groupKey) {
@@ -1988,6 +2205,8 @@ function renderTable(rows) {
           wrap.appendChild(add);
         }
         td.appendChild(wrap);
+      } else if (h === 'Step') {
+        td.appendChild(renderStepBadge(val));
       } else if (h === 'PIN Code') {
         const sid = sidIdx >= 0 ? row[sidIdx] : '';
         const isManual = sid && manualPins.has(sid);
