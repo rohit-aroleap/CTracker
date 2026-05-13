@@ -11,8 +11,8 @@
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
-    from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+  import { getDatabase, ref, get, update, serverTimestamp }
+    from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
   import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
            signOut, setPersistence, browserLocalPersistence }
     from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
@@ -27,34 +27,34 @@
     appId: "1:1014194001329:web:82e925713c03b865d2d990"
   };
 
-  const app = initializeApp(firebaseConfig);
-  const db  = getFirestore(app);
+  const app  = initializeApp(firebaseConfig);
+  const db   = getDatabase(app);
   const auth = getAuth(app);
   await setPersistence(auth, browserLocalPersistence);
-  const docRef = doc(db, "ctracker", "current");
+  const dataRef = ref(db, 'ctracker/current');
 
   window.firebaseSaveCSV = async (csvText) => {
-    await setDoc(docRef, { csv: csvText, updatedAt: serverTimestamp() }, { merge: true });
+    await update(dataRef, { csv: csvText, updatedAt: serverTimestamp() });
   };
   window.firebaseSaveSensors = async (ids) => {
-    await setDoc(docRef, { withSensorIds: ids, updatedAt: serverTimestamp() }, { merge: true });
+    await update(dataRef, { withSensorIds: ids, updatedAt: serverTimestamp() });
   };
   window.firebaseSavePins = async (manualPins) => {
-    await setDoc(docRef, { manualPins, updatedAt: serverTimestamp() }, { merge: true });
+    await update(dataRef, { manualPins, updatedAt: serverTimestamp() });
   };
   window.firebaseSaveMapLinks = async (mapLinks) => {
-    await setDoc(docRef, { mapLinks, updatedAt: serverTimestamp() }, { merge: true });
+    await update(dataRef, { mapLinks, updatedAt: serverTimestamp() });
   };
   window.firebaseLoadCSV = async () => {
-    const snap = await getDoc(docRef);
+    const snap = await get(dataRef);
     if (!snap.exists()) return null;
-    const data = snap.data();
+    const data = snap.val() || {};
     return {
-      csv: data.csv,
+      csv: data.csv || '',
       withSensorIds: data.withSensorIds || [],
       manualPins: data.manualPins || {},
       mapLinks: data.mapLinks || {},
-      updatedAt: data.updatedAt?.toDate?.() ?? null
+      updatedAt: data.updatedAt ? new Date(data.updatedAt) : null
     };
   };
   window.firebaseSignIn = (email, password) =>
@@ -961,7 +961,7 @@
 
 <div class="topbar">
   <h1>Ferra Subscriptions</h1>
-  <span class="version-tag">v1.012</span>
+  <span class="version-tag">v1.013</span>
   <span class="sep">|</span>
   <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Upload CSV</button>
   <input type="file" id="fileInput" accept=".csv">

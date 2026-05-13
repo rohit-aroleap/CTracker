@@ -67,8 +67,10 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
+import { getFirestore, doc, getDoc }
   from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import { getDatabase, ref, set, serverTimestamp as dbServerTimestamp }
+  from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
 import { getAuth, signInWithEmailAndPassword, setPersistence, inMemoryPersistence }
   from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 
@@ -81,6 +83,7 @@ const SRC_CONFIG = {
 const DST_CONFIG = {
   apiKey: "AIzaSyC5mZAG98VAeDpp1IssYYQ2kcKeClyqIGc",
   authDomain: "motherofdashboard.firebaseapp.com",
+  databaseURL: "https://motherofdashboard-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "motherofdashboard",
   appId: "1:1014194001329:web:82e925713c03b865d2d990",
 };
@@ -88,7 +91,7 @@ const DST_CONFIG = {
 const srcApp  = initializeApp(SRC_CONFIG, 'src');
 const dstApp  = initializeApp(DST_CONFIG, 'dst');
 const srcDb   = getFirestore(srcApp);
-const dstDb   = getFirestore(dstApp);
+const dstRtdb = getDatabase(dstApp);
 const srcAuth = getAuth(srcApp);
 const dstAuth = getAuth(dstApp);
 await setPersistence(srcAuth, inMemoryPersistence);
@@ -142,17 +145,17 @@ window.signInDest = async () => {
 
 window.writeDest = async () => {
   const s = document.getElementById('writeStatus');
-  s.textContent = 'Writing…'; s.className = '';
+  s.textContent = 'Writing to motherofdashboard Realtime Database…'; s.className = '';
   if (!srcData) { s.textContent = '✗ Read source first.'; s.className = 'err'; return; }
   try {
-    await setDoc(doc(dstDb, 'ctracker', 'current'), {
+    await set(ref(dstRtdb, 'ctracker/current'), {
       csv: srcData.csv || '',
       withSensorIds: srcData.withSensorIds || [],
       manualPins: srcData.manualPins || {},
       mapLinks: srcData.mapLinks || {},
-      updatedAt: serverTimestamp(),
+      updatedAt: dbServerTimestamp(),
     });
-    s.textContent = '✓ Wrote ctracker/current to motherofdashboard. Migration complete — you can delete migrate.html now.';
+    s.textContent = '✓ Wrote /ctracker/current to motherofdashboard RTDB. Migration complete — you can delete migrate.html now.';
     s.className = 'ok';
   } catch (e) { s.textContent = '✗ ' + (e.message || e.code); s.className = 'err'; }
 };
