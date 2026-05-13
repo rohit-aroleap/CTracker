@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CTracker · One-off Firestore migration</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0f1117; color: #e2e8f0; max-width: 720px; margin: 40px auto; padding: 24px; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  .sub { color: #64748b; font-size: 13px; margin-bottom: 24px; }
+  .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px; padding: 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; margin-bottom: 10px; color: #c7d2fe; }
+  input { background: #12151f; border: 1px solid #2d3148; color: #e2e8f0;
+          border-radius: 6px; padding: 7px 10px; font-size: 13px; margin: 4px 0; width: 100%; max-width: 320px; }
+  button { background: #4f46e5; color: #fff; border: none; border-radius: 6px;
+           padding: 8px 16px; font-size: 13px; cursor: pointer; margin-top: 10px; }
+  button:hover { background: #4338ca; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  pre { background: #0a0c12; padding: 12px; border-radius: 6px; font-size: 11px;
+        max-height: 200px; overflow: auto; color: #94a3b8; border: 1px solid #1e2235; }
+  .ok { color: #86efac; }
+  .err { color: #fca5a5; }
+  .step-num { display: inline-block; width: 22px; height: 22px; line-height: 22px;
+              border-radius: 50%; background: #4f46e5; color: #fff; text-align: center;
+              font-size: 11px; font-weight: 700; margin-right: 8px; }
+</style>
+</head>
+<body>
+
+<h1>CTracker · Firestore migration</h1>
+<div class="sub">
+  Reads <code>ctracker/current</code> from <b>tidal-velocity-275918</b> and writes the
+  identical doc to <b>motherofdashboard</b>. One-off — delete this file when done.
+</div>
+
+<div class="card">
+  <h2><span class="step-num">1</span>Sign in (source project)</h2>
+  <div class="sub">Use your <code>rohit@aroleap.com</code> account (the one set up on tidal-velocity-275918).</div>
+  <input type="email" id="srcEmail" placeholder="email">
+  <input type="password" id="srcPwd" placeholder="password">
+  <br>
+  <button onclick="signInSource()">Sign in to source</button>
+  <div id="srcStatus"></div>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">2</span>Read source data</h2>
+  <button id="readBtn" onclick="readSource()" disabled>Read ctracker/current</button>
+  <pre id="srcDump">—</pre>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">3</span>Sign in (destination project)</h2>
+  <div class="sub">Use the account you set up on motherofdashboard.</div>
+  <input type="email" id="dstEmail" placeholder="email">
+  <input type="password" id="dstPwd" placeholder="password">
+  <br>
+  <button onclick="signInDest()">Sign in to destination</button>
+  <div id="dstStatus"></div>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">4</span>Write to destination</h2>
+  <button id="writeBtn" onclick="writeDest()" disabled>Write ctracker/current to motherofdashboard</button>
+  <div id="writeStatus"></div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, setPersistence, inMemoryPersistence }
+  from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+
+const SRC_CONFIG = {
+  apiKey: "AIzaSyAXw4AB59Km4N92Y67ODaiOJBmvNxmJdtw",
+  authDomain: "tidal-velocity-275918.firebaseapp.com",
+  projectId: "tidal-velocity-275918",
+  appId: "1:359357212651:web:263fdce4f7682ce3131bae",
+};
+const DST_CONFIG = {
+  apiKey: "AIzaSyC5mZAG98VAeDpp1IssYYQ2kcKeClyqIGc",
+  authDomain: "motherofdashboard.firebaseapp.com",
+  projectId: "motherofdashboard",
+  appId: "1:1014194001329:web:82e925713c03b865d2d990",
+};
+
+const srcApp  = initializeApp(SRC_CONFIG, 'src');
+const dstApp  = initializeApp(DST_CONFIG, 'dst');
+const srcDb   = getFirestore(srcApp);
+const dstDb   = getFirestore(dstApp);
+const srcAuth = getAuth(srcApp);
+const dstAuth = getAuth(dstApp);
+await setPersistence(srcAuth, inMemoryPersistence);
+await setPersistence(dstAuth, inMemoryPersistence);
+
+let srcData = null;
+
+window.signInSource = async () => {
+  const s = document.getElementById('srcStatus');
+  s.textContent = 'Signing in…'; s.className = '';
+  try {
+    await signInWithEmailAndPassword(srcAuth,
+      document.getElementById('srcEmail').value,
+      document.getElementById('srcPwd').value);
+    s.textContent = '✓ Signed in to source.';
+    s.className = 'ok';
+    document.getElementById('readBtn').disabled = false;
+  } catch (e) { s.textContent = '✗ ' + (e.message || e.code); s.className = 'err'; }
+};
+
+window.readSource = async () => {
+  const dump = document.getElementById('srcDump');
+  dump.textContent = 'Reading…';
+  try {
+    const snap = await getDoc(doc(srcDb, 'ctracker', 'current'));
+    if (!snap.exists()) { dump.textContent = 'No document at ctracker/current in source.'; return; }
+    srcData = snap.data();
+    const preview = {
+      csvBytes: (srcData.csv || '').length,
+      withSensorIds: (srcData.withSensorIds || []).length + ' ids',
+      manualPins: Object.keys(srcData.manualPins || {}).length + ' entries',
+      mapLinks:   Object.keys(srcData.mapLinks   || {}).length + ' entries',
+    };
+    dump.textContent = JSON.stringify(preview, null, 2);
+    document.getElementById('writeBtn').disabled = !dstAuth.currentUser;
+  } catch (e) { dump.textContent = '✗ ' + (e.message || e.code); }
+};
+
+window.signInDest = async () => {
+  const s = document.getElementById('dstStatus');
+  s.textContent = 'Signing in…'; s.className = '';
+  try {
+    await signInWithEmailAndPassword(dstAuth,
+      document.getElementById('dstEmail').value,
+      document.getElementById('dstPwd').value);
+    s.textContent = '✓ Signed in to destination.';
+    s.className = 'ok';
+    if (srcData) document.getElementById('writeBtn').disabled = false;
+  } catch (e) { s.textContent = '✗ ' + (e.message || e.code); s.className = 'err'; }
+};
+
+window.writeDest = async () => {
+  const s = document.getElementById('writeStatus');
+  s.textContent = 'Writing…'; s.className = '';
+  if (!srcData) { s.textContent = '✗ Read source first.'; s.className = 'err'; return; }
+  try {
+    await setDoc(doc(dstDb, 'ctracker', 'current'), {
+      csv: srcData.csv || '',
+      withSensorIds: srcData.withSensorIds || [],
+      manualPins: srcData.manualPins || {},
+      mapLinks: srcData.mapLinks || {},
+      updatedAt: serverTimestamp(),
+    });
+    s.textContent = '✓ Wrote ctracker/current to motherofdashboard. Migration complete — you can delete migrate.html now.';
+    s.className = 'ok';
+  } catch (e) { s.textContent = '✗ ' + (e.message || e.code); s.className = 'err'; }
+};
+</script>
+
+</body>
+</html>
